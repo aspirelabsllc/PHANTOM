@@ -1,0 +1,184 @@
+import { z } from "zod";
+
+// The extracted brand kit — the eight categories the Phantom draws from the
+// offerings. Kept flat and enum-constrained so it validates as a structured
+// output (no min/max/length constraints, which the API rejects).
+
+export const BrandSchema = z.object({
+  name: z.string().describe("The brand's name."),
+  essence: z
+    .string()
+    .describe("One evocative sentence capturing the brand's soul — the Phantom's voice."),
+  story: z.object({
+    essence: z.string().describe("The core promise, one line."),
+    note: z.string().describe("Two or three sentences of supporting story."),
+  }),
+  color: z.object({
+    tokens: z
+      .array(
+        z.object({
+          hex: z.string().describe("Hex value like #0E1117."),
+          role: z.string().describe("Role: accent, canvas, deep, bright, etc."),
+        }),
+      )
+      .describe("Extracted color tokens, most important first (aim 4-8)."),
+    ratio: z
+      .array(
+        z.object({
+          label: z.string(),
+          pct: z.number().describe("Percentage of the surface, 0-100."),
+          hex: z.string(),
+        }),
+      )
+      .describe("Optional usage ratio across the palette; empty array if unknown."),
+  }),
+  type: z.object({
+    display: z.object({
+      name: z.string().describe("Display / heading typeface name."),
+      tag: z.string().describe("Short tag e.g. TECHNICAL PRECISION."),
+    }),
+    body: z.object({
+      name: z.string().describe("Body typeface name."),
+      note: z.string().describe("One line on how the body face reads."),
+    }),
+  }),
+  voice: z.object({
+    essence: z.string().describe("The voice in a few words, e.g. 'quiet authority'."),
+    prohibitions: z
+      .array(
+        z.object({
+          level: z.enum(["NEVER", "HARD"]),
+          text: z.string().describe("What must never be said, and why."),
+        }),
+      )
+      .describe("Voice prohibitions; empty array if none stated."),
+  }),
+  logo: z.object({
+    facts: z
+      .array(z.object({ label: z.string(), value: z.string() }))
+      .describe("Logo rules: clearspace, minimum size, never-do. Empty if unknown."),
+  }),
+  usage: z.object({
+    rules: z
+      .array(
+        z.object({
+          kind: z.enum(["DO", "DONT"]),
+          text: z.string(),
+        }),
+      )
+      .describe("Usage do's and don'ts; empty array if none."),
+  }),
+  compliance: z.object({
+    note: z.string().describe("One line on the compliance posture; empty string if none."),
+    rules: z
+      .array(z.object({ level: z.enum(["HARD"]), text: z.string() }))
+      .describe("Hard compliance rules; empty array if none."),
+  }),
+});
+
+export type Brand = z.infer<typeof BrandSchema>;
+
+// How the Manifest sandbox will consume an asset.
+export type AssetType = "font" | "logo" | "image" | "source";
+
+export type Offering = {
+  name: string;
+  size: number;
+  path: string; // storage path within the bucket
+  kind: string; // uppercase extension, e.g. HTML / PDF / SVG
+  extracted?: boolean; // false once uploaded, true after it's drawn into the brand
+  assetType?: AssetType; // classification for the Manifest handoff
+};
+
+const FONT_EXT = new Set(["woff2", "woff", "ttf", "otf"]);
+const IMG_EXT = new Set(["png", "jpg", "jpeg", "gif", "webp", "avif"]);
+
+export function deriveAssetType(name: string): AssetType {
+  const dot = name.lastIndexOf(".");
+  const ext = dot > -1 ? name.slice(dot + 1).toLowerCase() : "";
+  if (FONT_EXT.has(ext)) return "font";
+  if (ext === "svg") return "logo";
+  if (IMG_EXT.has(ext)) return "image";
+  return "source";
+}
+
+// Classification, honoring an explicit override, else derived from the name.
+export function assetTypeOf(o: Offering): AssetType {
+  return o.assetType ?? deriveAssetType(o.name);
+}
+
+export const ASSET_TYPES: AssetType[] = ["font", "logo", "image", "source"];
+
+// Offerings uploaded since the last extraction (undefined = legacy, treat as drawn).
+export function pendingOfferings(offerings: Offering[]): Offering[] {
+  return offerings.filter((o) => o.extracted === false);
+}
+
+export type ProjectState = "manifested" | "condensing" | "dormant";
+
+export type Project = {
+  id: string;
+  name: string;
+  state: ProjectState;
+  brand: Brand | null;
+  offerings: Offering[];
+  domain: string | null;
+  progress: number;
+  created_at: string;
+  updated_at: string;
+};
+
+// The eight nodes rendered in the extraction chamber, derived from a Brand.
+export type BrandNode = {
+  key: string;
+  label: string;
+  count?: number;
+};
+
+export function brandNodeKeys(): string[] {
+  return ["Story", "Color", "Type", "Voice", "Logo", "Usage", "Assets", "Compliance"];
+}
+
+function relativeTime(iso: string): string {
+  const then = new Date(iso).getTime();
+  const secs = Math.max(1, Math.floor((Date.now() - then) / 1000));
+  const mins = Math.floor(secs / 60);
+  const hrs = Math.floor(mins / 60);
+  const days = Math.floor(hrs / 24);
+  const wks = Math.floor(days / 7);
+  const mos = Math.floor(days / 30);
+  if (mos >= 1) return `${mos}MO AGO`;
+  if (wks >= 1) return `${wks}W AGO`;
+  if (days >= 1) return `${days}D AGO`;
+  if (hrs >= 1) return `${hrs}H AGO`;
+  if (mins >= 1) return `${mins}M AGO`;
+  return "JUST NOW";
+}
+
+// The right-hand status line on a Gallery frame.
+export function frameMeta(p: Project): string {
+  if (p.state === "manifested") return `MANIFESTED · ${relativeTime(p.updated_at)}`;
+  if (p.state === "condensing") return `CONDENSING · ${p.progress}%`;
+  if (p.offerings.length === 0) return "DORMANT · INVOCATION UNFINISHED";
+  return `DORMANT · LAST TOUCHED ${relativeTime(p.updated_at)}`;
+}
+
+export function frameDomain(p: Project): string {
+  if (p.domain) return p.domain;
+  if (p.state === "dormant") return "awaiting its invocation";
+  const slug = p.name.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "");
+  return `${slug || "phantom"}.phantom.site`;
+}
+
+// How many categories a brand actually populated — drives the "N categories drawn" readout.
+export function categoriesDrawn(brand: Brand): number {
+  let n = 0;
+  if (brand.story?.essence) n++;
+  if (brand.color?.tokens?.length) n++;
+  if (brand.type?.display?.name) n++;
+  if (brand.voice?.essence) n++;
+  if (brand.logo?.facts?.length) n++;
+  if (brand.usage?.rules?.length) n++;
+  if (brand.compliance?.rules?.length || brand.compliance?.note) n++;
+  return n;
+}
