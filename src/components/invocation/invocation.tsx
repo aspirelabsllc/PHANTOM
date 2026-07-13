@@ -386,7 +386,7 @@ export function Invocation({ project }: { project: Project }) {
       >
         <div className="invoke-head">
           <span className="mono">
-            THE PHANTOM · <span className="lit">{headState}</span>
+            PHANTOM · <span className="lit">{headState}</span>
           </span>
           <span className="mono" style={{ fontSize: "9px" }}>
             NOTHING IS LOST
@@ -395,7 +395,7 @@ export function Invocation({ project }: { project: Project }) {
 
         <div className="invoke-scroll" ref={scrollRef}>
           <div className="msg phantom manifest" style={{ ["--d" as string]: 2 }}>
-            <span className="who">The Phantom</span>
+            <span className="who">Phantom</span>
             <p className="voice-line">
               Bring me what remains of the brand — reports, marks, letterforms. I will listen to
               what they remember.
@@ -463,7 +463,7 @@ export function Invocation({ project }: { project: Project }) {
 
           {brand && status === "manifested" && (
             <div className="msg phantom">
-              <span className="who">The Phantom</span>
+              <span className="who">Phantom</span>
               <p className="voice-line">{brand.essence}</p>
               {brand.story?.note && <p className="plain">{brand.story.note}</p>}
             </div>
@@ -480,7 +480,7 @@ export function Invocation({ project }: { project: Project }) {
               </div>
               {t.reply && (
                 <div className="msg phantom">
-                  <span className="who">The Phantom</span>
+                  <span className="who">Phantom</span>
                   <p className="plain">{t.reply}</p>
                 </div>
               )}
@@ -508,11 +508,11 @@ export function Invocation({ project }: { project: Project }) {
               )}
               {pending.reply ? (
                 <div className="msg phantom">
-                  <span className="who">The Phantom</span>
+                  <span className="who">Phantom</span>
                   <p className="plain">{pending.reply}</p>
                 </div>
               ) : (
-                <div className="extract-row">THE PHANTOM CONSIDERS…</div>
+                <div className="extract-row">PHANTOM CONSIDERS…</div>
               )}
             </>
           )}
@@ -553,14 +553,15 @@ export function Invocation({ project }: { project: Project }) {
               >
                 {uploading ? <span className="mini-spin" aria-hidden="true" /> : "+"}
               </button>
-              <input
-                type="text"
+              <textarea
+                className="refine-input"
+                rows={1}
                 aria-label="Answer the Phantom"
-                placeholder={pending ? "The Phantom considers…" : "Answer the Phantom, or ask for a change…"}
+                placeholder={pending ? "Phantom considers…" : "Answer, or ask for a change…  (⇧↵ newline)"}
                 value={draft}
                 onChange={(e) => setDraft(e.target.value)}
                 onKeyDown={(e) => {
-                  if (e.key === "Enter") {
+                  if (e.key === "Enter" && !e.shiftKey) {
                     e.preventDefault();
                     startRefine(draft);
                   }

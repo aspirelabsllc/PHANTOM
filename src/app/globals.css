@@ -1022,7 +1022,7 @@ canvas.apparition {
 
 .invocation {
   position: relative;
-  z-index: 2;
+  z-index: 21; /* above the lab-nav (z-20) so node popovers float over it, not behind */
   height: calc(100vh - 54px);
   display: grid;
   grid-template-rows: 36px 1fr 64px;
@@ -1073,7 +1073,7 @@ canvas.apparition {
   grid-column: 1;
   position: relative;
   border-right: 1px solid var(--line-soft);
-  overflow: hidden;
+  overflow: visible; /* let node popovers escape the chamber instead of clipping */
 }
 .extract-stage canvas {
   position: absolute;
@@ -1174,6 +1174,8 @@ canvas.apparition {
   position: absolute;
   z-index: 40;
   width: 264px;
+  max-height: calc(100vh - 108px);
+  overflow-y: auto;
   background: rgba(14, 14, 22, 0.96);
   border: 1px solid rgba(221, 227, 255, 0.22);
   border-radius: 5px;
@@ -1226,14 +1228,13 @@ canvas.apparition {
   font-family: var(--font-mono);
   font-size: 8.5px;
   letter-spacing: 0.18em;
+  line-height: 1.5;
   text-transform: uppercase;
   color: var(--cyan);
   padding-bottom: 9px;
   margin-bottom: 10px;
   border-bottom: 1px solid var(--line-soft);
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
+  overflow-wrap: anywhere;
 }
 .pop-essence {
   font-family: var(--font-display);
@@ -1630,11 +1631,11 @@ canvas.apparition {
   flex-direction: row;
   align-items: center;
   justify-content: center;
-  gap: 10px;
+  gap: 8px;
   border: 1px solid var(--line);
   border-radius: 5px;
   background: var(--panel);
-  padding: 4px 5px 4px 14px;
+  padding: 4px 8px 4px 5px;
   transition: border-color 500ms var(--ease-out), box-shadow 700ms var(--ease-out);
 }
 .composer .field:focus-within {
@@ -2014,9 +2015,8 @@ textarea.pop-in {
   font-size: 9px;
   letter-spacing: 0.04em;
   color: var(--dim);
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
+  overflow-wrap: anywhere;
+  min-width: 0;
 }
 .pa-tag {
   flex: none;
@@ -2110,4 +2110,29 @@ button.pa-tag:hover {
 .specimen.uploading .size {
   color: var(--cyan);
   font-style: italic;
+}
+
+/* ---- refine textarea (Enter sends · Shift+Enter newlines) ---- */
+.composer .refine-input {
+  flex: 1;
+  min-width: 0;
+  background: none;
+  border: none;
+  outline: none;
+  resize: none;
+  font-family: var(--font-ui);
+  font-weight: 300;
+  font-size: 13.5px;
+  line-height: 1.5;
+  color: var(--phosphor);
+  padding: 8px 0;
+  max-height: 120px;
+  overflow-y: auto;
+  field-sizing: content;
+}
+.composer .refine-input::placeholder {
+  color: var(--faint);
+  font-style: italic;
+  font-family: var(--font-display);
+  font-size: 15px;
 }

@@ -3,10 +3,10 @@ import { signOut } from "@/app/actions";
 
 type Current = "gallery" | "invocation" | "manifest";
 
+// The Manifest is reached from an open brand / the Invocation, not the nav.
 const LINKS: { key: Current; href: string; label: React.ReactNode }[] = [
   { key: "gallery", href: "/gallery", label: "Gallery" },
   { key: "invocation", href: "/invocation", label: <>The&nbsp;Invocation</> },
-  { key: "manifest", href: "/manifest", label: <>The&nbsp;Manifest</> },
 ];
 
 export function LabNav({
