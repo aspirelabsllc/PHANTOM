@@ -630,7 +630,7 @@ export function Invocation({ project }: { project: Project }) {
         <span className="spacer" />
         <Link
           className="ghost-btn cyan enter-manifest"
-          href="/manifest"
+          href={`/manifest/${project.id}`}
           aria-disabled={status !== "manifested"}
           style={status !== "manifested" ? { opacity: 0.4, pointerEvents: "none" } : undefined}
         >
