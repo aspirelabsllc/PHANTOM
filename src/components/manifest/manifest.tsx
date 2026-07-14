@@ -215,26 +215,36 @@ export function Manifest({
                 : "AWAITING THE FORM"}
         </div>
         <div className="spacer" />
-        <button
-          className="ghost-btn"
-          onClick={() => doReset("full")}
-          disabled={resetting || building || !preview}
-          title="Reset the site and conversation to a fresh start"
-        >
-          {resetting ? "Resetting…" : "Reset"}
-        </button>
-        <button
-          className="ghost-btn"
-          onClick={() => preview && window.open(preview, "_blank", "noopener")}
-          disabled={!preview}
-          title="Open the live preview in a new tab"
-        >
-          Take&nbsp;a&nbsp;Peek
-        </button>
-        <button className="ghost-btn ecto crossover" title="Publish — coming soon" disabled>
-          <span className="dot ecto" />
-          Publish
-        </button>
+        <div className="top-actions">
+          <button
+            className="top-action danger"
+            onClick={() => doReset("full")}
+            disabled={resetting || building || !preview}
+            title="Reset the site and conversation to a fresh start"
+          >
+            <svg width="12" height="12" viewBox="0 0 14 14" fill="none" aria-hidden="true">
+              <path d="M11.6 4.2A5 5 0 1 0 12 7" stroke="currentColor" strokeWidth="1.2" strokeLinecap="round" />
+              <path d="M12 1.7v2.6H9.4" stroke="currentColor" strokeWidth="1.2" strokeLinecap="round" strokeLinejoin="round" />
+            </svg>
+            {resetting ? "Resetting…" : "Reset"}
+          </button>
+          <button
+            className="top-action peek"
+            onClick={() => preview && window.open(preview, "_blank", "noopener")}
+            disabled={!preview}
+            title="Open the live preview in a new tab"
+          >
+            <svg width="13" height="13" viewBox="0 0 16 16" fill="none" aria-hidden="true">
+              <path d="M1 8s2.6-4.4 7-4.4S15 8 15 8s-2.6 4.4-7 4.4S1 8 1 8Z" stroke="currentColor" strokeWidth="1.1" />
+              <circle cx="8" cy="8" r="1.9" stroke="currentColor" strokeWidth="1.1" />
+            </svg>
+            Take&nbsp;a&nbsp;Peek
+          </button>
+          <button className="ghost-btn ecto crossover" title="Publish — coming soon" disabled>
+            <span className="dot ecto" />
+            Publish
+          </button>
+        </div>
       </header>
 
       {/* left: chat */}

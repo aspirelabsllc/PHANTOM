@@ -2305,6 +2305,53 @@ button.pa-tag:hover {
   margin-right: 2px;
 }
 
+/* the top-bar action cluster: two compact secondary buttons + Publish */
+.top-actions {
+  display: inline-flex;
+  align-items: center;
+  gap: 10px;
+}
+.top-action {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  font-family: var(--font-mono);
+  font-size: 9.5px;
+  letter-spacing: 0.18em;
+  text-transform: uppercase;
+  color: var(--dim);
+  padding: 8px 13px;
+  border: 1px solid var(--line-soft);
+  border-radius: 3px;
+  background: rgba(221, 227, 255, 0.015);
+  transition: color 300ms var(--ease-out), border-color 300ms var(--ease-out),
+    background 300ms var(--ease-out), box-shadow 300ms var(--ease-out);
+}
+.top-action svg {
+  opacity: 0.85;
+}
+.top-action:hover:not(:disabled) {
+  color: var(--phosphor);
+  border-color: var(--line-bright);
+  background: rgba(221, 227, 255, 0.045);
+}
+.top-action:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+}
+/* Take a Peek — a viewing action, cyan on hover */
+.top-action.peek:hover:not(:disabled) {
+  color: var(--cyan);
+  border-color: rgba(127, 247, 228, 0.4);
+  box-shadow: 0 0 20px rgba(127, 247, 228, 0.12);
+}
+/* Reset — destructive, warm on hover */
+.top-action.danger:hover:not(:disabled) {
+  color: #ff9b9b;
+  border-color: rgba(255, 140, 140, 0.42);
+  box-shadow: 0 0 20px rgba(255, 120, 120, 0.12);
+}
+
 /* ---- left: chat ---- */
 .m-chat {
   grid-row: 2;
