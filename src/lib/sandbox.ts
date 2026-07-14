@@ -155,9 +155,14 @@ export async function connectSandbox(
 // through our gateway (ANTHROPIC_BASE_URL) with a session token as its key.
 export const AGENT_RUNNER = [
   "import { query } from '@anthropic-ai/claude-agent-sdk';",
+  "import { existsSync } from 'node:fs';",
   "const prompt = process.env.PHANTOM_PROMPT || '';",
   "const brand = process.env.PHANTOM_BRAND || '{}';",
   "const resume = process.env.PHANTOM_SESSION || '';",
+  "const pluginBase = (process.env.HOME || '/root') + '/.phantom-plugins';",
+  "const plugins = (process.env.PHANTOM_PLUGINS || '').split(',').filter(Boolean)",
+  "  .map((n) => pluginBase + '/' + n).filter((p) => existsSync(p))",
+  "  .map((path) => ({ type: 'local', path }));",
   "const emit = (o) => console.log(JSON.stringify(o));",
   "const system = [",
   "  'You are the Phantom — you build a real website inside this Vite + React + Tailwind project (already scaffolded).',",
@@ -177,6 +182,7 @@ export const AGENT_RUNNER = [
   "  permissionMode: 'bypassPermissions',",
   "  maxTurns: 40,",
   "};",
+  "if (plugins.length) base.plugins = plugins;",
   "let sawStream = false;",
   "async function run(options) {",
   "  for await (const m of query({ prompt, options })) {",
@@ -197,10 +203,30 @@ export const AGENT_RUNNER = [
   "emit({ t: 'end' });",
 ].join("\n");
 
-// Write the runner + make sure the Agent SDK is installed in the VM.
+// Skill plugins cloned into the VM and handed to the agent via the SDK's
+// `plugins` option. Each repo is a self-contained plugin (has .claude-plugin/).
+// Cloned once per sandbox, outside the site cwd so the agent never touches them.
+const AGENT_PLUGINS: { name: string; repo: string }[] = [
+  { name: "ui-ux-pro-max", repo: "https://github.com/nextlevelbuilder/ui-ux-pro-max-skill" },
+  { name: "fullstack-dev-skills", repo: "https://github.com/jeffallan/claude-skills" },
+];
+// passed to the runner as PHANTOM_PLUGINS so it can resolve the cloned dirs
+export const AGENT_PLUGIN_NAMES = AGENT_PLUGINS.map((p) => p.name).join(",");
+
+// Write the runner, ensure the Agent SDK is installed, and clone the skill
+// plugins into the VM.
 export async function ensureBuilder(client: SbClient): Promise<void> {
   await client.fs.writeTextFile("agent-runner.mjs", AGENT_RUNNER);
   await client.commands.run(
     "node -e \"require.resolve('@anthropic-ai/claude-agent-sdk')\" 2>/dev/null || npm install @anthropic-ai/claude-agent-sdk@0.3.207",
   );
+  // clone skill plugins (idempotent + shallow); never fail the build on this
+  const dir = "$HOME/.phantom-plugins";
+  const steps = [`mkdir -p ${dir}`];
+  for (const p of AGENT_PLUGINS) {
+    steps.push(
+      `test -d ${dir}/${p.name}/.git || git clone --depth 1 --single-branch -q ${p.repo} ${dir}/${p.name}`,
+    );
+  }
+  await client.commands.run(steps.join(" ; ") + " ; true");
 }

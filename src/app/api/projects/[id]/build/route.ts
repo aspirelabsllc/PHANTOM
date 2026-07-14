@@ -1,6 +1,6 @@
 import { type NextRequest } from "next/server";
 import { createClient } from "@/lib/supabase/server";
-import { bootSandbox, connectSandbox, ensureBuilder } from "@/lib/sandbox";
+import { bootSandbox, connectSandbox, ensureBuilder, AGENT_PLUGIN_NAMES } from "@/lib/sandbox";
 import { mintSessionToken } from "@/lib/gateway-token";
 import type { Brand } from "@/lib/brand";
 
@@ -95,6 +95,8 @@ export async function GET(req: NextRequest, ctx: { params: Promise<{ id: string 
             IS_SANDBOX: "1", // CSB VMs run as root; let Claude Code bypass permissions
             PHANTOM_PROMPT: say,
             PHANTOM_BRAND: JSON.stringify((project.brand as Brand | null) ?? {}),
+            PHANTOM_PLUGINS: AGENT_PLUGIN_NAMES, // ui-ux-pro-max + fullstack-dev-skills
+
             // resume the prior Agent SDK session so the Phantom recalls the conversation
             ...(project.agent_session_id
               ? { PHANTOM_SESSION: project.agent_session_id as string }
