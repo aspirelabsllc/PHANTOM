@@ -213,6 +213,26 @@ const AGENT_PLUGINS: { name: string; repo: string }[] = [
 // passed to the runner as PHANTOM_PLUGINS so it can resolve the cloned dirs
 export const AGENT_PLUGIN_NAMES = AGENT_PLUGINS.map((p) => p.name).join(",");
 
+// fullstack-dev-skills ships 66 skills; keep only the ones relevant to a
+// Vite + React + Tailwind site builder and prune the rest so the agent's
+// context stays sharp (the backend/mobile/infra/language packs just add noise).
+const FULLSTACK_KEEP = [
+  "react-expert",
+  "nextjs-developer",
+  "vue-expert",
+  "angular-architect",
+  "typescript-pro",
+  "javascript-pro",
+  "api-designer",
+  "playwright-expert",
+  "test-master",
+  "code-reviewer",
+  "code-documenter",
+  "debugging-wizard",
+  "secure-code-guardian",
+  "architecture-designer",
+];
+
 // Write the runner, ensure the Agent SDK is installed, and clone the skill
 // plugins into the VM.
 export async function ensureBuilder(client: SbClient): Promise<void> {
@@ -228,5 +248,11 @@ export async function ensureBuilder(client: SbClient): Promise<void> {
       `test -d ${dir}/${p.name}/.git || git clone --depth 1 --single-branch -q ${p.repo} ${dir}/${p.name}`,
     );
   }
+  // prune fullstack-dev-skills down to the frontend-relevant keep-set (idempotent)
+  const fsDir = `${dir}/fullstack-dev-skills/skills`;
+  const keep = ` ${FULLSTACK_KEEP.join(" ")} `;
+  steps.push(
+    `if [ -d ${fsDir} ]; then for d in ${fsDir}/*/; do n=$(basename "$d"); case "${keep}" in *" $n "*) ;; *) rm -rf "$d";; esac; done; fi`,
+  );
   await client.commands.run(steps.join(" ; ") + " ; true");
 }
