@@ -2323,6 +2323,29 @@ button.pa-tag:hover {
   padding: 14px 20px;
   border-bottom: 1px solid var(--line-soft);
 }
+.chat-reset {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-family: var(--font-mono);
+  font-size: 9px;
+  letter-spacing: 0.2em;
+  color: var(--faint);
+  padding: 5px 9px;
+  border: 1px solid var(--line-soft);
+  border-radius: 3px;
+  transition: color 300ms var(--ease-out), border-color 300ms var(--ease-out),
+    background 300ms var(--ease-out);
+}
+.chat-reset:hover:not(:disabled) {
+  color: var(--cyan);
+  border-color: rgba(127, 247, 228, 0.4);
+  background: rgba(127, 247, 228, 0.04);
+}
+.chat-reset:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+}
 .chat-scroll {
   flex: 1;
   min-height: 0;

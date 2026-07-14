@@ -113,6 +113,30 @@ export function Manifest({
   const [turns, setTurns] = useState<Turn[]>(() => messagesToTurns(initialMessages));
   const [pending, setPending] = useState<Turn | null>(null);
   const [previewKey, setPreviewKey] = useState(0);
+  const [resetting, setResetting] = useState(false);
+
+  // Reset a project. "conversation" clears the chat + agent memory; "full" also
+  // wipes the site back to the starter scaffold and reloads the preview.
+  async function doReset(scope: "conversation" | "full") {
+    if (resetting || building) return;
+    const msg =
+      scope === "full"
+        ? "Reset the entire site to a fresh start and clear the conversation? This cannot be undone."
+        : "Reset the conversation and the Phantom's memory? The built site is kept.";
+    if (!window.confirm(msg)) return;
+    setResetting(true);
+    try {
+      const res = await fetch(`/api/projects/${project.id}/reset?scope=${scope}`, { method: "POST" });
+      if (!res.ok) throw new Error("reset failed");
+      setTurns([]);
+      setPending(null);
+      if (scope === "full") setPreviewKey((k) => k + 1);
+    } catch {
+      // leave state as-is on failure
+    } finally {
+      setResetting(false);
+    }
+  }
 
   function startBuild(text: string) {
     const say = text.trim();
@@ -191,9 +215,25 @@ export function Manifest({
                 : "AWAITING THE FORM"}
         </div>
         <div className="spacer" />
+        <button
+          className="ghost-btn"
+          onClick={() => doReset("full")}
+          disabled={resetting || building || !preview}
+          title="Reset the site and conversation to a fresh start"
+        >
+          {resetting ? "Resetting…" : "Reset"}
+        </button>
+        <button
+          className="ghost-btn"
+          onClick={() => preview && window.open(preview, "_blank", "noopener")}
+          disabled={!preview}
+          title="Open the live preview in a new tab"
+        >
+          Take&nbsp;a&nbsp;Peek
+        </button>
         <button className="ghost-btn ecto crossover" title="Publish — coming soon" disabled>
           <span className="dot ecto" />
-          CROSS&nbsp;OVER
+          Publish
         </button>
       </header>
 
@@ -204,9 +244,23 @@ export function Manifest({
             PHANTOM&nbsp;·&nbsp;
             <span className="lit">{building ? "BUILDING" : b ? "ATTUNED" : "DORMANT"}</span>
           </span>
-          <span className="mono" style={{ fontSize: "9px" }}>
-            TRANSCRIPT&nbsp;01
-          </span>
+          <button
+            className="chat-reset"
+            onClick={() => doReset("conversation")}
+            disabled={resetting || building}
+            title="Reset the conversation and the Phantom's memory"
+          >
+            <svg width="11" height="11" viewBox="0 0 12 12" fill="none" aria-hidden="true">
+              <path
+                d="M9.5 3.2A4 4 0 1 0 10 6"
+                stroke="currentColor"
+                strokeWidth="1.1"
+                strokeLinecap="round"
+              />
+              <path d="M9.8 1.6v2h-2" stroke="currentColor" strokeWidth="1.1" strokeLinecap="round" strokeLinejoin="round" />
+            </svg>
+            RESET&nbsp;CHAT
+          </button>
         </div>
         <div className="chat-scroll">
           <div className="msg phantom">
@@ -299,10 +353,6 @@ export function Manifest({
               disabled={!preview || building}
             />
           </div>
-          <div className="hint">
-            <span>{building ? "the form is condensing…" : "↵ to manifest · ⇧↵ newline"}</span>
-            <span>the phantom hears everything</span>
-          </div>
         </div>
       </aside>
 
@@ -317,7 +367,7 @@ export function Manifest({
               </svg>
             </span>
             <b>{domain}</b>
-            <span className="tail">&nbsp;·&nbsp;APPARITION&nbsp;·&nbsp;NOT&nbsp;YET&nbsp;CROSSED</span>
+            <span className="tail">&nbsp;·&nbsp;NOT&nbsp;PUBLISHED&nbsp;YET</span>
           </div>
           <div className="spacer" />
           <div className="phase-toggles" role="group" aria-label="Device phase">

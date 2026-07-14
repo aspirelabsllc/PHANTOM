@@ -151,6 +151,17 @@ export async function connectSandbox(
   return { client, previewUrl };
 }
 
+// Reset a project's site back to the starter scaffold: wipe everything the
+// agent wrote under src/ and restore the original files, then nudge Vite.
+export async function resetSandboxFiles(sandboxId: string): Promise<void> {
+  const { client } = await connectSandbox(sandboxId);
+  await client.commands.run("rm -rf src");
+  for (const [path, content] of Object.entries(STARTER)) {
+    await client.fs.writeTextFile(path, content);
+  }
+  await client.commands.runBackground("pgrep -f 'vite' >/dev/null 2>&1 || npm run dev");
+}
+
 // The agent runner that runs INSIDE the sandbox. It reaches Anthropic only
 // through our gateway (ANTHROPIC_BASE_URL) with a session token as its key.
 export const AGENT_RUNNER = [
