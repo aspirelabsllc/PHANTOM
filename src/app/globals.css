@@ -1459,6 +1459,88 @@ canvas.apparition {
   font-weight: 500;
   color: var(--phosphor);
 }
+
+/* rendered markdown replies (bold, lists, code, links, headings) */
+.msg.phantom .plain.md > :first-child {
+  margin-top: 0;
+}
+.msg.phantom .plain.md > :last-child {
+  margin-bottom: 0;
+}
+.msg.phantom .plain.md p {
+  margin: 0 0 9px;
+}
+.msg.phantom .plain.md strong {
+  font-weight: 500;
+  color: var(--phosphor);
+}
+.msg.phantom .plain.md em {
+  font-style: italic;
+}
+.msg.phantom .plain.md ul,
+.msg.phantom .plain.md ol {
+  margin: 0 0 9px;
+  padding-left: 18px;
+}
+.msg.phantom .plain.md li {
+  margin: 0 0 4px;
+}
+.msg.phantom .plain.md li::marker {
+  color: var(--faint);
+}
+.msg.phantom .plain.md h1,
+.msg.phantom .plain.md h2,
+.msg.phantom .plain.md h3 {
+  font-family: var(--font-display);
+  font-weight: 500;
+  color: var(--phosphor);
+  line-height: 1.3;
+  margin: 13px 0 6px;
+}
+.msg.phantom .plain.md h1 {
+  font-size: 16.5px;
+}
+.msg.phantom .plain.md h2 {
+  font-size: 15px;
+}
+.msg.phantom .plain.md h3 {
+  font-size: 13.5px;
+  letter-spacing: 0.02em;
+}
+.msg.phantom .plain.md a {
+  color: var(--cyan);
+  text-decoration: underline;
+  text-underline-offset: 2px;
+}
+.msg.phantom .plain.md code {
+  font-family: var(--font-mono);
+  font-size: 12px;
+  background: var(--raised);
+  padding: 1px 5px;
+  border-radius: 3px;
+  color: var(--phosphor);
+}
+.msg.phantom .plain.md pre {
+  background: var(--raised);
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  padding: 10px 12px;
+  margin: 0 0 9px;
+  overflow-x: auto;
+}
+.msg.phantom .plain.md pre code {
+  background: none;
+  padding: 0;
+  font-size: 11.5px;
+  line-height: 1.5;
+}
+.msg.phantom .plain.md blockquote {
+  border-left: 2px solid var(--line);
+  margin: 0 0 9px;
+  padding-left: 10px;
+  color: var(--faint);
+  font-style: italic;
+}
 .msg.user {
   align-items: flex-end;
   text-align: right;

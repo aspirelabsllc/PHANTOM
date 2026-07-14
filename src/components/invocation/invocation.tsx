@@ -5,6 +5,7 @@ import { Fragment, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import { ApparitionField } from "@/components/apparition";
 import { CategoryNodes } from "@/components/invocation/nodes";
+import { ReplyMd } from "@/components/reply-md";
 import {
   categoriesDrawn,
   pendingOfferings,
@@ -481,7 +482,7 @@ export function Invocation({ project }: { project: Project }) {
               {t.reply && (
                 <div className="msg phantom">
                   <span className="who">Phantom</span>
-                  <p className="plain">{t.reply}</p>
+                  <ReplyMd>{t.reply}</ReplyMd>
                 </div>
               )}
             </Fragment>
@@ -509,7 +510,7 @@ export function Invocation({ project }: { project: Project }) {
               {pending.reply ? (
                 <div className="msg phantom">
                   <span className="who">Phantom</span>
-                  <p className="plain">{pending.reply}</p>
+                  <ReplyMd>{pending.reply}</ReplyMd>
                 </div>
               ) : (
                 <div className="extract-row">PHANTOM CONSIDERS…</div>

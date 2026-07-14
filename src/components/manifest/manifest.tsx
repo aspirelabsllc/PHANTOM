@@ -4,6 +4,7 @@ import Link from "next/link";
 import { Fragment, useEffect, useState } from "react";
 import { frameDomain, assetTypeOf, type Project } from "@/lib/brand";
 import type { StoredMessage } from "@/lib/projects";
+import { ReplyMd } from "@/components/reply-md";
 
 type Row = { verb?: string; target?: string };
 type Turn = { you: string; reply: string; logs: Row[] };
@@ -241,7 +242,7 @@ export function Manifest({
               {t.reply && (
                 <div className="msg phantom">
                   <span className="who">Phantom</span>
-                  <p className="plain">{t.reply}</p>
+                  <ReplyMd>{t.reply}</ReplyMd>
                 </div>
               )}
             </Fragment>
@@ -268,7 +269,7 @@ export function Manifest({
               {pending.reply ? (
                 <div className="msg phantom">
                   <span className="who">Phantom</span>
-                  <p className="plain">{pending.reply}</p>
+                  <ReplyMd>{pending.reply}</ReplyMd>
                 </div>
               ) : (
                 !pending.logs.length && <div className="sys-row">THE PHANTOM IS AT WORK…</div>
