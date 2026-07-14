@@ -75,6 +75,7 @@ export function Manifest({
 }) {
   const [device, setDevice] = useState<Device>("desktop");
   const [tab, setTab] = useState<Tab>("vault");
+  const [vaultOpen, setVaultOpen] = useState(true);
   const b = project.brand;
   const name = b?.name ?? project.name;
   const domain = frameDomain(project);
@@ -159,7 +160,7 @@ export function Manifest({
   }
 
   return (
-    <div className="manifest-shell">
+    <div className={`manifest-shell${vaultOpen ? "" : " vault-collapsed"}`}>
       {/* top bar */}
       <header className="s-top">
         <Link className="back" href="/gallery">
@@ -331,6 +332,30 @@ export function Manifest({
               </button>
             ))}
           </div>
+          <button
+            className="vault-toggle"
+            aria-expanded={vaultOpen}
+            aria-label={vaultOpen ? "Collapse the Vault" : "Expand the Vault"}
+            title={vaultOpen ? "Collapse the Vault" : "Expand the Vault"}
+            onClick={() => setVaultOpen((o) => !o)}
+          >
+            <svg
+              width="12"
+              height="12"
+              viewBox="0 0 12 12"
+              fill="none"
+              aria-hidden="true"
+              style={{ transform: vaultOpen ? "none" : "rotate(180deg)" }}
+            >
+              <path
+                d="M4.5 2 8.5 6l-4 4"
+                stroke="currentColor"
+                strokeWidth="1.3"
+                strokeLinecap="round"
+                strokeLinejoin="round"
+              />
+            </svg>
+          </button>
         </div>
         <div className="chamber-stage">
           <div className="chamber-frame" style={{ ["--frame-w" as string]: FRAME_W[device] }}>
@@ -366,7 +391,7 @@ export function Manifest({
       </section>
 
       {/* right: the vault */}
-      <aside className="vault" aria-label="The Vault — the stored brand">
+      <aside className="vault" aria-label="The Vault — the stored brand" aria-hidden={!vaultOpen}>
         <div className="vault-tabs" role="tablist">
           {(["layers", "inspect", "vault"] as Tab[]).map((t) => (
             <button

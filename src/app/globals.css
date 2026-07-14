@@ -2148,6 +2148,16 @@ button.pa-tag:hover {
   display: grid;
   grid-template-rows: 54px 1fr;
   grid-template-columns: 380px 1fr 300px;
+  transition: grid-template-columns 320ms var(--ease-out);
+}
+/* the Vault collapses to give the chamber the full width */
+.manifest-shell.vault-collapsed {
+  grid-template-columns: 380px 1fr 0;
+}
+.manifest-shell.vault-collapsed .vault {
+  border-left: none;
+  opacity: 0;
+  pointer-events: none;
 }
 
 /* ---- top bar ---- */
@@ -2453,8 +2463,33 @@ button.pa-tag:hover {
   display: flex;
   flex-direction: column;
   min-height: 0;
+  overflow: hidden;
   border-left: 1px solid var(--line-soft);
   background: rgba(14, 14, 22, 0.55);
+  transition: opacity 240ms var(--ease-out);
+}
+
+/* collapse/expand handle — lives at the right end of the chamber bar */
+.vault-toggle {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 26px;
+  height: 26px;
+  margin-left: 10px;
+  border: 1px solid var(--line-soft);
+  border-radius: 3px;
+  color: var(--dim);
+  transition: color 300ms var(--ease-out), border-color 300ms var(--ease-out),
+    background 300ms var(--ease-out);
+}
+.vault-toggle:hover {
+  color: var(--cyan);
+  border-color: rgba(127, 247, 228, 0.4);
+  background: rgba(127, 247, 228, 0.04);
+}
+.vault-toggle svg {
+  transition: transform 320ms var(--ease-out);
 }
 .vault-tabs {
   flex: none;
@@ -2791,6 +2826,9 @@ button.pa-tag:hover {
 @media (max-width: 1280px) {
   .manifest-shell {
     grid-template-columns: 330px 1fr 280px;
+  }
+  .manifest-shell.vault-collapsed {
+    grid-template-columns: 330px 1fr 0;
   }
 }
 
