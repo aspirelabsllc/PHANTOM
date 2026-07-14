@@ -2793,3 +2793,26 @@ button.pa-tag:hover {
     grid-template-columns: 330px 1fr 280px;
   }
 }
+
+/* ---- manifest chat system row ---- */
+.sys-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  font-family: var(--font-mono);
+  font-size: 9px;
+  letter-spacing: 0.22em;
+  text-transform: uppercase;
+  color: var(--cyan);
+}
+.sys-row::before,
+.sys-row::after {
+  content: "";
+  flex: 1;
+  height: 1px;
+  background: rgba(127, 247, 228, 0.18);
+}
+.m-chat iframe,
+.chamber-frame iframe {
+  background: #fff;
+}

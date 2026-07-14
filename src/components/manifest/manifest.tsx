@@ -1,8 +1,11 @@
 "use client";
 
 import Link from "next/link";
-import { useEffect, useState } from "react";
+import { Fragment, useEffect, useState } from "react";
 import { frameDomain, assetTypeOf, type Project } from "@/lib/brand";
+
+type Row = { verb?: string; target?: string };
+type Turn = { you: string; reply: string; logs: Row[] };
 
 type Device = "desktop" | "tablet" | "phone";
 type Tab = "layers" | "inspect" | "vault";
@@ -76,6 +79,59 @@ export function Manifest({ project }: { project: Project }) {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
+  // build conversation
+  const [draft, setDraft] = useState("");
+  const [building, setBuilding] = useState(false);
+  const [turns, setTurns] = useState<Turn[]>([]);
+  const [pending, setPending] = useState<Turn | null>(null);
+  const [previewKey, setPreviewKey] = useState(0);
+
+  function startBuild(text: string) {
+    const say = text.trim();
+    if (!say || building || !preview) return;
+    setDraft("");
+    setBuilding(true);
+    setPending({ you: say, reply: "", logs: [] });
+
+    const es = new EventSource(`/api/projects/${project.id}/build?say=${encodeURIComponent(say)}`);
+    es.onmessage = (e) => {
+      const m = JSON.parse(e.data);
+      switch (m.t) {
+        case "log":
+          setPending((p) => (p ? { ...p, logs: [...p.logs, { verb: m.verb, target: m.target }] } : p));
+          break;
+        case "say":
+          setPending((p) => (p ? { ...p, reply: (p.reply ? p.reply + " " : "") + m.text } : p));
+          break;
+        case "done":
+          setPending((p) => {
+            if (p) setTurns((t) => [...t, p]);
+            return null;
+          });
+          setBuilding(false);
+          setPreviewKey((k) => k + 1);
+          es.close();
+          break;
+        case "error":
+          setPending((p) => {
+            if (p) setTurns((t) => [...t, { ...p, reply: p.reply || `The build faltered — ${m.message}` }]);
+            return null;
+          });
+          setBuilding(false);
+          es.close();
+          break;
+      }
+    };
+    es.onerror = () => {
+      es.close();
+      setBuilding(false);
+      setPending((p) => {
+        if (p) setTurns((t) => [...t, p]);
+        return null;
+      });
+    };
+  }
+
   return (
     <div className="manifest-shell">
       {/* top bar */}
@@ -117,7 +173,8 @@ export function Manifest({ project }: { project: Project }) {
       <aside className="m-chat" aria-label="Conversation with the Phantom">
         <div className="chat-head">
           <span className="mono">
-            PHANTOM&nbsp;·&nbsp;<span className="lit">{b ? "ATTUNED" : "DORMANT"}</span>
+            PHANTOM&nbsp;·&nbsp;
+            <span className="lit">{building ? "BUILDING" : b ? "ATTUNED" : "DORMANT"}</span>
           </span>
           <span className="mono" style={{ fontSize: "9px" }}>
             TRANSCRIPT&nbsp;01
@@ -127,53 +184,95 @@ export function Manifest({ project }: { project: Project }) {
           <div className="msg phantom">
             <span className="who">Phantom</span>
             <p className="voice-line">
-              The vault holds {name}. When the builder is summoned, speak — and the form takes shape
-              in the chamber.
+              The vault holds {name}. Speak — name what this site should be, and I will draw it from
+              the brand.
             </p>
             <p className="plain">
-              I will read the brand you drew — its colors, faces, voice, and hard rules — and write a
-              real site that never crosses them. Every claim held to the ledger.
+              I read the colors, faces, voice, and hard rules you drew, then write a real site that
+              never crosses them. Try: <b>“build a landing page for {name}.”</b>
             </p>
           </div>
-          <div className="sys-row" style={{ display: "flex", gap: 10, alignItems: "center" }}>
-            <span
-              style={{
-                flex: 1,
-                height: 1,
-                background: "rgba(127,247,228,0.18)",
-              }}
-            />
-            <span
-              className="mono"
-              style={{ fontSize: 9, letterSpacing: "0.22em", color: "var(--cyan)" }}
-            >
-              BUILDER CONDENSING
-            </span>
-            <span style={{ flex: 1, height: 1, background: "rgba(127,247,228,0.18)" }} />
-          </div>
-          <div className="msg phantom">
-            <span className="who">Phantom</span>
-            <p className="plain" style={{ color: "var(--faint)" }}>
-              The manifestation engine — the sandbox where I write and run your site — is still
-              condensing out of the vapor. The vault on the right is already held and in sync, ready
-              for the moment it arrives.
-            </p>
-          </div>
+
+          {turns.map((t, i) => (
+            <Fragment key={i}>
+              <div className="msg user">
+                <span className="who">You</span>
+                <div className="bubble">
+                  <p>{t.you}</p>
+                </div>
+              </div>
+              {!!t.logs.length && (
+                <div className="lab-log" role="log">
+                  {t.logs.map((l, j) => (
+                    <div className="log-row" key={j}>
+                      <span className={`verb ${(l.verb ?? "").toLowerCase()}`}>{l.verb}</span>
+                      <span className="target">{l.target}</span>
+                    </div>
+                  ))}
+                </div>
+              )}
+              {t.reply && (
+                <div className="msg phantom">
+                  <span className="who">Phantom</span>
+                  <p className="plain">{t.reply}</p>
+                </div>
+              )}
+            </Fragment>
+          ))}
+
+          {pending && (
+            <>
+              <div className="msg user">
+                <span className="who">You</span>
+                <div className="bubble">
+                  <p>{pending.you}</p>
+                </div>
+              </div>
+              {!!pending.logs.length && (
+                <div className="lab-log" role="log">
+                  {pending.logs.map((l, j) => (
+                    <div className={`log-row${j === pending.logs.length - 1 ? " running" : ""}`} key={j}>
+                      <span className={`verb ${(l.verb ?? "").toLowerCase()}`}>{l.verb}</span>
+                      <span className="target">{l.target}</span>
+                    </div>
+                  ))}
+                </div>
+              )}
+              {pending.reply ? (
+                <div className="msg phantom">
+                  <span className="who">Phantom</span>
+                  <p className="plain">{pending.reply}</p>
+                </div>
+              ) : (
+                !pending.logs.length && <div className="sys-row">THE PHANTOM IS AT WORK…</div>
+              )}
+            </>
+          )}
         </div>
         <div className="m-composer">
           <div className="field">
-            <button className="offer-plus" type="button" disabled title="Coming soon">
-              +
-            </button>
             <textarea
+              className="refine-input"
               rows={1}
               aria-label="Speak to the Phantom"
-              placeholder="The builder is being summoned…"
-              disabled
+              placeholder={
+                preview
+                  ? "Speak, and it will take shape…  (⇧↵ newline)"
+                  : "Waiting for the chamber to open…"
+              }
+              value={draft}
+              onChange={(e) => setDraft(e.target.value)}
+              onKeyDown={(e) => {
+                if (e.key === "Enter" && !e.shiftKey) {
+                  e.preventDefault();
+                  startBuild(draft);
+                }
+              }}
+              disabled={!preview || building}
             />
           </div>
           <div className="hint">
-            <span>↵ to manifest · coming soon</span>
+            <span>{building ? "the form is condensing…" : "↵ to manifest · ⇧↵ newline"}</span>
             <span>the phantom hears everything</span>
           </div>
         </div>
@@ -210,7 +309,7 @@ export function Manifest({ project }: { project: Project }) {
         <div className="chamber-stage">
           <div className="chamber-frame" style={{ ["--frame-w" as string]: FRAME_W[device] }}>
             {preview ? (
-              <iframe src={preview} title={`${name} — live preview`} />
+              <iframe key={previewKey} src={preview} title={`${name} — live preview`} />
             ) : booting ? (
               <div className="frame-await">
                 <span className="await-sigil">{SIGIL}</span>

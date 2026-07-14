@@ -19,6 +19,7 @@ const STARTER: Record<string, string> = {
       scripts: { dev: "vite --host" },
       dependencies: { react: "^18.3.1", "react-dom": "^18.3.1" },
       devDependencies: {
+        "@anthropic-ai/claude-agent-sdk": "^0.3.207",
         "@vitejs/plugin-react": "^4.3.4",
         "@tailwindcss/vite": "^4.0.0",
         tailwindcss: "^4.0.0",
@@ -118,4 +119,79 @@ export async function bootSandbox(existingId: string | null): Promise<BootResult
   });
   const previewUrl = s.hosts.getUrl({ sandboxId, token: token.token }, DEV_PORT);
   return { sandboxId, previewUrl, created };
+}
+
+// Minimal shape of the connected sandbox client we use.
+type SbCommand = {
+  onOutput: (cb: (chunk: string) => void) => { dispose: () => void };
+  onStatusChange: (cb: (s: string) => void) => { dispose: () => void };
+  kill?: () => Promise<void>;
+};
+export type SbClient = {
+  fs: { writeTextFile: (path: string, content: string) => Promise<unknown> };
+  commands: {
+    run: (cmd: string, opts?: { env?: Record<string, string> }) => Promise<string>;
+    runBackground: (cmd: string, opts?: { env?: Record<string, string> }) => Promise<SbCommand>;
+  };
+};
+
+// Resume a sandbox, connect, ensure the dev server is up, and return the client
+// plus a fresh preview URL.
+export async function connectSandbox(
+  sandboxId: string,
+): Promise<{ client: SbClient; previewUrl: string }> {
+  const s = sdk();
+  const sb = await s.sandboxes.resume(sandboxId);
+  const client = (await sb.connect()) as unknown as SbClient;
+  await client.commands.runBackground(`pgrep -f 'vite' >/dev/null 2>&1 || npm run dev`);
+  const token = await s.hosts.createToken(sandboxId, {
+    expiresAt: new Date(Date.now() + 24 * 60 * 60 * 1000),
+  });
+  const previewUrl = s.hosts.getUrl({ sandboxId, token: token.token }, DEV_PORT);
+  return { client, previewUrl };
+}
+
+// The agent runner that runs INSIDE the sandbox. It reaches Anthropic only
+// through our gateway (ANTHROPIC_BASE_URL) with a session token as its key.
+export const AGENT_RUNNER = [
+  "import { query } from '@anthropic-ai/claude-agent-sdk';",
+  "const prompt = process.env.PHANTOM_PROMPT || '';",
+  "const brand = process.env.PHANTOM_BRAND || '{}';",
+  "const emit = (o) => console.log(JSON.stringify(o));",
+  "const system = [",
+  "  'You are the Phantom — you build a real website inside this Vite + React + Tailwind project (already scaffolded).',",
+  "  'Edit files under src/ (mainly src/App.jsx, and new components under src/). Style everything with Tailwind utility classes.',",
+  "  'Honor the brand kit below exactly: use its colors (hex), type pairing, and voice; NEVER violate any hard compliance rule.',",
+  "  'Keep the app building: valid JSX and imports. Do not touch package.json, vite.config.js, or node_modules.',",
+  "  'Work decisively — read only what you need, then write the files. Stop when the change is done.',",
+  "  '',",
+  "  'BRAND KIT (JSON):',",
+  "  brand,",
+  "].join(String.fromCharCode(10));",
+  "try {",
+  "  for await (const m of query({ prompt, options: {",
+  "    model: 'claude-opus-4-8',",
+  "    systemPrompt: system,",
+  "    cwd: process.cwd(),",
+  "    allowedTools: ['Read','Write','Edit','Bash','Glob','Grep'],",
+  "    permissionMode: 'bypassPermissions',",
+  "    maxTurns: 40,",
+  "  }})) {",
+  "    if (m.type === 'assistant' && m.message) {",
+  "      for (const b of m.message.content) {",
+  "        if (b.type === 'text' && b.text) emit({ t: 'text', text: b.text });",
+  "        else if (b.type === 'tool_use') { const i = b.input || {}; emit({ t: 'tool', verb: b.name, target: i.file_path || i.path || i.pattern || i.command || '' }); }",
+  "      }",
+  "    } else if (m.type === 'result') { emit({ t: 'result', subtype: m.subtype }); }",
+  "  }",
+  "} catch (e) { emit({ t: 'error', message: String((e && e.message) || e) }); }",
+  "emit({ t: 'end' });",
+].join("\n");
+
+// Write the runner + make sure the Agent SDK is installed in the VM.
+export async function ensureBuilder(client: SbClient): Promise<void> {
+  await client.fs.writeTextFile("agent-runner.mjs", AGENT_RUNNER);
+  await client.commands.run(
+    "node -e \"require.resolve('@anthropic-ai/claude-agent-sdk')\" 2>/dev/null || npm install @anthropic-ai/claude-agent-sdk@0.3.207",
+  );
 }
