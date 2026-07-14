@@ -15,7 +15,9 @@ export function Frame({ project, delay }: { project: Project; delay: number }) {
     <Link
       className={`frame ${s.frame} manifest`}
       style={{ ["--d" as string]: delay }}
-      href={`/invocation/${project.id}`}
+      // once a brand is manifested it opens straight into the manifest workspace;
+      // still-forming / dormant brands go back to the invocation to finish extraction
+      href={project.state === "manifested" ? `/manifest/${project.id}` : `/invocation/${project.id}`}
     >
       <Thumb name={name} accent={accentOf(project.brand)} />
       <div className="frame-meta">
