@@ -1,7 +1,7 @@
 "use client";
 
 import Link from "next/link";
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { frameDomain, assetTypeOf, type Project } from "@/lib/brand";
 
 type Device = "desktop" | "tablet" | "phone";
@@ -51,6 +51,31 @@ export function Manifest({ project }: { project: Project }) {
   const domain = frameDomain(project);
   const assets = project.offerings ?? [];
 
+  // the sandbox chamber
+  const [preview, setPreview] = useState<string | null>(null);
+  const [booting, setBooting] = useState(false);
+  const [bootErr, setBootErr] = useState<string | null>(null);
+
+  async function boot() {
+    setBooting(true);
+    setBootErr(null);
+    try {
+      const res = await fetch(`/api/projects/${project.id}/sandbox`, { method: "POST" });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error ?? "boot failed");
+      setPreview(data.previewUrl as string);
+    } catch (e) {
+      setBootErr(e instanceof Error ? e.message : "The chamber would not open.");
+    } finally {
+      setBooting(false);
+    }
+  }
+
+  useEffect(() => {
+    if (b) boot();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
   return (
     <div className="manifest-shell">
       {/* top bar */}
@@ -73,7 +98,13 @@ export function Manifest({ project }: { project: Project }) {
         </h1>
         <div className="status">
           <span className="dot cyan breathe" />
-          {b ? "ATTUNED · NOT YET CROSSED" : "AWAITING THE FORM"}
+          {booting
+            ? "SUMMONING THE CHAMBER"
+            : preview
+              ? "LIVE · NOT YET CROSSED"
+              : b
+                ? "ATTUNED · NOT YET CROSSED"
+                : "AWAITING THE FORM"}
         </div>
         <div className="spacer" />
         <button className="ghost-btn ecto crossover" title="Publish — coming soon" disabled>
@@ -178,14 +209,33 @@ export function Manifest({ project }: { project: Project }) {
         </div>
         <div className="chamber-stage">
           <div className="chamber-frame" style={{ ["--frame-w" as string]: FRAME_W[device] }}>
-            <div className="frame-await">
-              <span className="await-sigil">{SIGIL}</span>
-              <h2>The form has not yet condensed.</h2>
-              <p>
-                The builder is being summoned. Once it arrives, {name} will take shape here — live,
-                editable, drawn from the vault.
-              </p>
-            </div>
+            {preview ? (
+              <iframe src={preview} title={`${name} — live preview`} />
+            ) : booting ? (
+              <div className="frame-await">
+                <span className="await-sigil">{SIGIL}</span>
+                <h2>Summoning the chamber…</h2>
+                <p>
+                  Booting the sandbox and installing the runtime — this can take a minute on first
+                  open.
+                </p>
+              </div>
+            ) : bootErr ? (
+              <div className="frame-await">
+                <span className="await-sigil">{SIGIL}</span>
+                <h2>The chamber would not open.</h2>
+                <p>{bootErr}</p>
+                <button className="ghost-btn cyan" type="button" onClick={boot} style={{ marginTop: 6 }}>
+                  Try again
+                </button>
+              </div>
+            ) : (
+              <div className="frame-await">
+                <span className="await-sigil">{SIGIL}</span>
+                <h2>The form has not yet condensed.</h2>
+                <p>Draw this brand in the Invocation first, then return to manifest it.</p>
+              </div>
+            )}
           </div>
         </div>
       </section>

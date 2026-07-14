@@ -124,6 +124,7 @@ export type Project = {
   offerings: Offering[];
   domain: string | null;
   progress: number;
+  sandbox_id: string | null;
   created_at: string;
   updated_at: string;
 };

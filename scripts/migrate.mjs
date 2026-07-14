@@ -31,6 +31,9 @@ create table if not exists public.phantom_projects (
 
 create index if not exists phantom_projects_owner_idx on public.phantom_projects (owner, created_at desc);
 
+-- the CodeSandbox VM backing this project's Manifest (site build)
+alter table public.phantom_projects add column if not exists sandbox_id text;
+
 alter table public.phantom_projects enable row level security;
 
 drop policy if exists "own_select" on public.phantom_projects;
