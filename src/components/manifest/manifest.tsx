@@ -1,7 +1,7 @@
 "use client";
 
 import Link from "next/link";
-import { Fragment, useEffect, useState } from "react";
+import { Fragment, useEffect, useRef, useState } from "react";
 import { frameDomain, assetTypeOf, type Project } from "@/lib/brand";
 import type { StoredMessage } from "@/lib/projects";
 import { ReplyMd } from "@/components/reply-md";
@@ -114,6 +114,13 @@ export function Manifest({
   const [pending, setPending] = useState<Turn | null>(null);
   const [previewKey, setPreviewKey] = useState(0);
   const [resetting, setResetting] = useState(false);
+
+  // keep the chat pinned to the latest message as it streams
+  const scrollRef = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    const el = scrollRef.current;
+    if (el) el.scrollTop = el.scrollHeight;
+  }, [turns, pending]);
 
   // Reset a project. "conversation" clears the chat + agent memory; "full" also
   // wipes the site back to the starter scaffold and reloads the preview.
@@ -272,7 +279,7 @@ export function Manifest({
             RESET&nbsp;CHAT
           </button>
         </div>
-        <div className="chat-scroll">
+        <div className="chat-scroll" ref={scrollRef}>
           <div className="msg phantom">
             <span className="who">Phantom</span>
             <p className="voice-line">
