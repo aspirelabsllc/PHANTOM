@@ -182,7 +182,7 @@ export const AGENT_RUNNER = [
   "  allowedTools: ['Read','Write','Edit','Bash','Glob','Grep'],",
   "  permissionMode: 'bypassPermissions',",
   "  maxTurns: 40,",
-  "  skills: 'all',",
+  "  skills: ['ui-ux-pro-max:ui-ux-pro-max','ui-ux-pro-max:design','ui-ux-pro-max:design-system','ui-ux-pro-max:ui-styling','ui-ux-pro-max:brand','ui-ux-pro-max:banner-design','ui-ux-pro-max:slides'],",
   "};",
   "if (plugins.length) base.plugins = plugins;",
   "let sawStream = false;",
