@@ -23,7 +23,7 @@ export async function GET(req: NextRequest, ctx: { params: Promise<{ id: string 
 
   const { data: project } = await supabase
     .from("phantom_projects")
-    .select("id, sandbox_id, brand")
+    .select("id, sandbox_id, brand, agent_session_id")
     .eq("id", id)
     .maybeSingle();
   if (!project) return new Response("not found", { status: 404 });
@@ -44,11 +44,34 @@ export async function GET(req: NextRequest, ctx: { params: Promise<{ id: string 
         controller.close();
       };
 
+      // accumulate the turn so it can be persisted durably (survives reload)
+      const accLogs: { verb?: string; target?: string }[] = [];
+      let accReply = "";
+      let accError: string | null = null;
+      let sessionId: string | null = null;
+      let phantomSaved = false;
+      const savePhantom = async () => {
+        if (phantomSaved) return;
+        phantomSaved = true;
+        const content = accError ? { message: accError } : { reply: accReply, logs: accLogs };
+        await supabase.from("phantom_messages").insert({
+          project_id: id,
+          role: "phantom",
+          kind: accError ? "error" : "say",
+          content,
+        });
+      };
+
       try {
         if (!say) {
           send({ t: "error", message: "Say what to build." });
           return finish();
         }
+
+        // record the invoker's words durably before any work begins
+        await supabase
+          .from("phantom_messages")
+          .insert({ project_id: id, role: "user", kind: "say", content: { text: say } });
 
         // ensure a sandbox exists
         let sandboxId = project.sandbox_id as string | null;
@@ -72,6 +95,10 @@ export async function GET(req: NextRequest, ctx: { params: Promise<{ id: string 
             IS_SANDBOX: "1", // CSB VMs run as root; let Claude Code bypass permissions
             PHANTOM_PROMPT: say,
             PHANTOM_BRAND: JSON.stringify((project.brand as Brand | null) ?? {}),
+            // resume the prior Agent SDK session so the Phantom recalls the conversation
+            ...(project.agent_session_id
+              ? { PHANTOM_SESSION: project.agent_session_id as string }
+              : {}),
           },
         });
 
@@ -80,15 +107,24 @@ export async function GET(req: NextRequest, ctx: { params: Promise<{ id: string 
         const handle = (line: string) => {
           const s = line.trim();
           if (!s) return;
-          let m: { t?: string; verb?: string; target?: string; text?: string; message?: string };
+          let m: { t?: string; verb?: string; target?: string; text?: string; message?: string; id?: string };
           try {
             m = JSON.parse(s);
           } catch {
             return; // ignore non-JSON stdout noise
           }
-          if (m.t === "tool") send({ t: "log", verb: m.verb, target: m.target });
-          else if (m.t === "text" && m.text) send({ t: "say", text: m.text });
-          else if (m.t === "error") send({ t: "error", message: m.message });
+          if (m.t === "tool") {
+            send({ t: "log", verb: m.verb, target: m.target });
+            accLogs.push({ verb: m.verb, target: m.target });
+          } else if (m.t === "text" && m.text) {
+            send({ t: "say", text: m.text });
+            accReply += (accReply ? " " : "") + m.text;
+          } else if (m.t === "session" && m.id) {
+            sessionId = m.id;
+          } else if (m.t === "error") {
+            send({ t: "error", message: m.message });
+            accError = m.message ?? "The build faltered.";
+          }
         };
 
         cmd.onOutput((chunk) => {
@@ -106,10 +142,16 @@ export async function GET(req: NextRequest, ctx: { params: Promise<{ id: string 
 
         clearInterval(timer);
         if (buf) handle(buf);
-        await supabase.from("phantom_projects").update({ updated_at: new Date().toISOString() }).eq("id", id);
+        await savePhantom();
+        const upd: Record<string, unknown> = { updated_at: new Date().toISOString() };
+        if (sessionId && sessionId !== project.agent_session_id) upd.agent_session_id = sessionId;
+        await supabase.from("phantom_projects").update(upd).eq("id", id);
         send({ t: "done" });
       } catch (err) {
-        send({ t: "error", message: err instanceof Error ? err.message : "The build slipped away." });
+        const message = err instanceof Error ? err.message : "The build slipped away.";
+        send({ t: "error", message });
+        accError = accError ?? message;
+        await savePhantom().catch(() => {});
       } finally {
         finish();
       }

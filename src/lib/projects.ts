@@ -24,3 +24,27 @@ export async function getProject(id: string): Promise<Project | null> {
   if (error) throw error;
   return (data as Project) ?? null;
 }
+
+// One persisted build-chat event. Ordered by `seq`; content shape depends on
+// role/kind (user → {text}; phantom say → {reply,logs}; phantom error → {message}).
+export type StoredMessage = {
+  role: "user" | "phantom";
+  kind: "say" | "log" | "error";
+  content: {
+    text?: string;
+    reply?: string;
+    logs?: { verb?: string; target?: string }[];
+    message?: string;
+  };
+};
+
+export async function getMessages(projectId: string): Promise<StoredMessage[]> {
+  const supabase = await createClient();
+  const { data, error } = await supabase
+    .from("phantom_messages")
+    .select("role, kind, content")
+    .eq("project_id", projectId)
+    .order("seq", { ascending: true });
+  if (error) throw error;
+  return (data ?? []) as StoredMessage[];
+}

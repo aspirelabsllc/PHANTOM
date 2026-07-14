@@ -34,6 +34,9 @@ create index if not exists phantom_projects_owner_idx on public.phantom_projects
 -- the CodeSandbox VM backing this project's Manifest (site build)
 alter table public.phantom_projects add column if not exists sandbox_id text;
 
+-- the Agent SDK session id, so build turns resume the same conversation
+alter table public.phantom_projects add column if not exists agent_session_id text;
+
 alter table public.phantom_projects enable row level security;
 
 drop policy if exists "own_select" on public.phantom_projects;
@@ -45,12 +48,44 @@ create policy "own_select" on public.phantom_projects for select using (owner = 
 create policy "own_insert" on public.phantom_projects for insert with check (owner = auth.uid());
 create policy "own_update" on public.phantom_projects for update using (owner = auth.uid());
 create policy "own_delete" on public.phantom_projects for delete using (owner = auth.uid());
+
+-- durable build-chat transcript (one row per streamed event; ordered by seq)
+create table if not exists public.phantom_messages (
+  id           uuid primary key default gen_random_uuid(),
+  project_id   uuid not null references public.phantom_projects(id) on delete cascade,
+  role         text not null check (role in ('user','phantom')),
+  kind         text not null default 'say'
+                 check (kind in ('say','log','error')),
+  content      jsonb not null default '{}'::jsonb,
+  seq          bigserial,
+  created_at   timestamptz not null default now()
+);
+
+create index if not exists phantom_messages_project_idx
+  on public.phantom_messages (project_id, seq);
+
+alter table public.phantom_messages enable row level security;
+
+drop policy if exists "msg_own_select" on public.phantom_messages;
+drop policy if exists "msg_own_insert" on public.phantom_messages;
+drop policy if exists "msg_own_delete" on public.phantom_messages;
+
+-- ownership flows through the parent project row (RLS on phantom_projects)
+create policy "msg_own_select" on public.phantom_messages for select using (
+  exists (select 1 from public.phantom_projects p
+          where p.id = project_id and p.owner = auth.uid()));
+create policy "msg_own_insert" on public.phantom_messages for insert with check (
+  exists (select 1 from public.phantom_projects p
+          where p.id = project_id and p.owner = auth.uid()));
+create policy "msg_own_delete" on public.phantom_messages for delete using (
+  exists (select 1 from public.phantom_projects p
+          where p.id = project_id and p.owner = auth.uid()));
 `;
 
 const pg = new Client({ connectionString: env.SUPABASE_DATABASE_URL });
 await pg.connect();
 await pg.query(SQL);
-console.log("✓ phantom_projects table + RLS ready");
+console.log("✓ phantom_projects + phantom_messages tables + RLS ready");
 await pg.end();
 
 // --- private storage bucket (idempotent) ---

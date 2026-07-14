@@ -25,7 +25,12 @@ export async function POST(_req: NextRequest, ctx: { params: Promise<{ id: strin
   try {
     const { sandboxId, previewUrl, created } = await bootSandbox(project.sandbox_id ?? null);
     if (created || sandboxId !== project.sandbox_id) {
-      await supabase.from("phantom_projects").update({ sandbox_id: sandboxId }).eq("id", id);
+      // a freshly created VM has no ~/.claude transcript → the old session id is
+      // stale and would make `resume` fail, so drop it with the new sandbox id
+      await supabase
+        .from("phantom_projects")
+        .update({ sandbox_id: sandboxId, ...(created ? { agent_session_id: null } : {}) })
+        .eq("id", id);
     }
     return NextResponse.json({ previewUrl, sandboxId, created });
   } catch (err) {

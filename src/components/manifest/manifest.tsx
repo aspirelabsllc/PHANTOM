@@ -3,9 +3,29 @@
 import Link from "next/link";
 import { Fragment, useEffect, useState } from "react";
 import { frameDomain, assetTypeOf, type Project } from "@/lib/brand";
+import type { StoredMessage } from "@/lib/projects";
 
 type Row = { verb?: string; target?: string };
 type Turn = { you: string; reply: string; logs: Row[] };
+
+// Rebuild the committed conversation from persisted rows. Each user row opens a
+// turn; the following phantom row fills its reply/logs (or an error line).
+function messagesToTurns(msgs: StoredMessage[]): Turn[] {
+  const turns: Turn[] = [];
+  for (const m of msgs) {
+    if (m.role === "user") {
+      turns.push({ you: m.content.text ?? "", reply: "", logs: [] });
+    } else if (turns.length) {
+      const cur = turns[turns.length - 1];
+      if (m.kind === "error") cur.reply = `The build faltered — ${m.content.message ?? ""}`;
+      else {
+        cur.reply = m.content.reply ?? "";
+        cur.logs = m.content.logs ?? [];
+      }
+    }
+  }
+  return turns;
+}
 
 type Device = "desktop" | "tablet" | "phone";
 type Tab = "layers" | "inspect" | "vault";
@@ -46,7 +66,13 @@ function DeviceDot({ d }: { d: Device }) {
   );
 }
 
-export function Manifest({ project }: { project: Project }) {
+export function Manifest({
+  project,
+  initialMessages = [],
+}: {
+  project: Project;
+  initialMessages?: StoredMessage[];
+}) {
   const [device, setDevice] = useState<Device>("desktop");
   const [tab, setTab] = useState<Tab>("vault");
   const b = project.brand;
@@ -82,7 +108,7 @@ export function Manifest({ project }: { project: Project }) {
   // build conversation
   const [draft, setDraft] = useState("");
   const [building, setBuilding] = useState(false);
-  const [turns, setTurns] = useState<Turn[]>([]);
+  const [turns, setTurns] = useState<Turn[]>(() => messagesToTurns(initialMessages));
   const [pending, setPending] = useState<Turn | null>(null);
   const [previewKey, setPreviewKey] = useState(0);
 
