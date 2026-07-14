@@ -1,4 +1,5 @@
 import { type NextRequest } from "next/server";
+import { Agent, fetch as undiciFetch } from "undici";
 import { verifySessionToken } from "@/lib/gateway-token";
 
 export const runtime = "nodejs";
@@ -6,6 +7,12 @@ export const dynamic = "force-dynamic";
 export const maxDuration = 300;
 
 const ANTHROPIC = "https://api.anthropic.com";
+
+// A model turn can stream for minutes; undici's default 300s body/headers
+// timeouts would abort a long response mid-stream ("connection closed
+// mid-response"). Disable them so the proxy holds the stream open as long as
+// Anthropic keeps sending.
+const dispatcher = new Agent({ headersTimeout: 0, bodyTimeout: 0 });
 
 // The LLM gateway. The sandbox agent points ANTHROPIC_BASE_URL here and sends a
 // short-lived session token as its key. We validate it, swap in the real
@@ -32,7 +39,7 @@ async function proxy(req: NextRequest, path: string[]) {
   const method = req.method;
   const body = method === "GET" || method === "HEAD" ? undefined : await req.text();
 
-  const upstream = await fetch(url, { method, headers, body });
+  const upstream = await undiciFetch(url, { method, headers, body, dispatcher });
 
   // pass the (possibly streaming) response straight through
   const respHeaders = new Headers();
@@ -40,7 +47,10 @@ async function proxy(req: NextRequest, path: string[]) {
     const v = upstream.headers.get(h);
     if (v) respHeaders.set(h, v);
   }
-  return new Response(upstream.body, { status: upstream.status, headers: respHeaders });
+  return new Response(upstream.body as unknown as ReadableStream, {
+    status: upstream.status,
+    headers: respHeaders,
+  });
 }
 
 export async function POST(req: NextRequest, ctx: { params: Promise<{ path: string[] }> }) {
