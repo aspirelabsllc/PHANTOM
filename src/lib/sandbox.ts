@@ -181,7 +181,8 @@ export const AGENT_RUNNER = [
   "  'For any design or UI work, FIRST invoke the ui-ux-pro-max skill and apply its guidance on styles, color palettes, type pairings, layout, and UX — always subordinate to the brand kit and hard rules below.',",
   "  'Honor the brand kit below exactly: use its colors (hex), type pairing, and voice; NEVER violate any hard compliance rule.',",
   "  'Keep the app building: valid JSX and imports. Do not touch package.json, vite.config.js, or node_modules.',",
-  "  'Work decisively — read only what you need, then write the files. Stop when the change is done.',",
+  "  'SEE your work before finishing: after building or changing the UI, run `node shot.mjs /tmp/shot.png desktop` (also pass `tablet` or `phone` to check responsive), then Read /tmp/shot.png to view the actual rendered page. Critique it honestly against the brand — layout, spacing, hierarchy, color, contrast, overflow, broken or empty elements — and fix what looks off. Repeat the screenshot until it genuinely looks good.',",
+  "  'Work decisively — read only what you need, then write the files. Stop when the change is done and it looks right.',",
   "  '',",
   "  'BRAND KIT (JSON):',",
   "  brand,",
@@ -227,6 +228,25 @@ export const AGENT_RUNNER = [
   "emit({ t: 'end' });",
 ].join("\n");
 
+// The screenshot harness the agent runs to actually see the rendered site.
+// Playwright lives in an isolated dir ($HOME/.phantom-tools) so the built
+// site's own dependencies stay clean; createRequire resolves it from there.
+const SHOT_SCRIPT = [
+  "import { createRequire } from 'node:module';",
+  "const require = createRequire(process.env.HOME + '/.phantom-tools/');",
+  "const { chromium } = require('playwright');",
+  "const out = process.argv[2] || '/tmp/shot.png';",
+  "const device = process.argv[3] || 'desktop';",
+  "const sizes = { desktop: { width: 1280, height: 800 }, tablet: { width: 834, height: 1112 }, phone: { width: 390, height: 844 } };",
+  "const viewport = sizes[device] || sizes.desktop;",
+  "const b = await chromium.launch();",
+  "const p = await b.newPage({ viewport });",
+  "await p.goto('http://localhost:5173', { waitUntil: 'networkidle', timeout: 30000 });",
+  "await p.screenshot({ path: out, fullPage: true });",
+  "await b.close();",
+  "console.log('shot saved:', out, '(' + device + ')');",
+].join("\n");
+
 // Skill plugins cloned into the VM and handed to the agent via the SDK's
 // `plugins` option. Each repo is a self-contained plugin (has .claude-plugin/).
 // Cloned once per sandbox, outside the site cwd so the agent never touches them.
@@ -240,6 +260,7 @@ export const AGENT_PLUGIN_NAMES = AGENT_PLUGINS.map((p) => p.name).join(",");
 // plugins into the VM.
 export async function ensureBuilder(client: SbClient): Promise<void> {
   await client.fs.writeTextFile("agent-runner.mjs", AGENT_RUNNER);
+  await client.fs.writeTextFile("shot.mjs", SHOT_SCRIPT);
   await client.commands.run(
     "node -e \"require.resolve('@anthropic-ai/claude-agent-sdk')\" 2>/dev/null || npm install @anthropic-ai/claude-agent-sdk@0.3.207",
   );
@@ -253,5 +274,15 @@ export async function ensureBuilder(client: SbClient): Promise<void> {
   }
   // drop any fullstack-dev-skills clone left on older VMs (no longer used)
   steps.push(`rm -rf ${dir}/fullstack-dev-skills`);
+  // browser harness: Playwright + chromium in an isolated dir (once per VM),
+  // so `node shot.mjs` can screenshot the live preview for the agent to see
+  const tools = "$HOME/.phantom-tools";
+  steps.push(`mkdir -p ${tools}`);
+  steps.push(
+    `test -d ${tools}/node_modules/playwright || (cd ${tools} && npm init -y >/dev/null 2>&1 && npm i playwright >/dev/null 2>&1)`,
+  );
+  steps.push(
+    `test -d $HOME/.cache/ms-playwright || (cd ${tools} && npx --yes playwright install --with-deps chromium >/dev/null 2>&1)`,
+  );
   await client.commands.run(steps.join(" ; ") + " ; true");
 }
