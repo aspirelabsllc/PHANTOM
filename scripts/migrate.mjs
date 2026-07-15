@@ -37,6 +37,22 @@ alter table public.phantom_projects add column if not exists sandbox_id text;
 -- the Agent SDK session id, so build turns resume the same conversation
 alter table public.phantom_projects add column if not exists agent_session_id text;
 
+-- the claimed apparition ('one'|'two'|'three'; null = summons still open)
+alter table public.phantom_projects add column if not exists chosen_variant text;
+
+-- per-variant Agent SDK session ids, so each apparition keeps its own memory
+alter table public.phantom_projects add column if not exists agent_sessions jsonb not null default '{}'::jsonb;
+
+-- atomic offering append: the image gateway registers conjured assets from
+-- concurrent agent runs, so a read-modify-write would lose updates
+create or replace function public.phantom_append_offering(pid uuid, off jsonb)
+returns void language sql security definer set search_path = public as $$
+  update public.phantom_projects
+     set offerings = coalesce(offerings, '[]'::jsonb) || jsonb_build_array(off),
+         updated_at = now()
+   where id = pid;
+$$;
+
 alter table public.phantom_projects enable row level security;
 
 drop policy if exists "own_select" on public.phantom_projects;

@@ -30,9 +30,17 @@ export async function POST(req: NextRequest, ctx: { params: Promise<{ id: string
     if (scope === "full" && project.sandbox_id) {
       await resetSandboxFiles(project.sandbox_id);
     }
-    // clear the conversation + agent session in both cases
+    // clear the conversation + agent sessions in both cases; a full reset
+    // also un-claims the chosen form (the summons re-opens)
     await supabase.from("phantom_messages").delete().eq("project_id", id);
-    await supabase.from("phantom_projects").update({ agent_session_id: null }).eq("id", id);
+    await supabase
+      .from("phantom_projects")
+      .update({
+        agent_session_id: null,
+        agent_sessions: {},
+        ...(scope === "full" ? { chosen_variant: null } : {}),
+      })
+      .eq("id", id);
     return NextResponse.json({ ok: true, scope });
   } catch (err) {
     const message = err instanceof Error ? err.message : "reset failed";

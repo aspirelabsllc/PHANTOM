@@ -35,6 +35,7 @@ export type StoredMessage = {
     reply?: string;
     logs?: { verb?: string; target?: string }[];
     message?: string;
+    variant?: string; // which apparition spoke (absent on legacy single-lane rows)
   };
 };
 

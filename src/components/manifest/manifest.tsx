@@ -1,32 +1,65 @@
 "use client";
 
 import Link from "next/link";
-import { Fragment, useEffect, useRef, useState } from "react";
-import { frameDomain, assetTypeOf, type Project } from "@/lib/brand";
+import { Fragment, useCallback, useEffect, useRef, useState } from "react";
+import {
+  frameDomain,
+  assetTypeOf,
+  VARIANTS,
+  VARIANT_META,
+  type Project,
+  type Variant,
+} from "@/lib/brand";
 import type { StoredMessage } from "@/lib/projects";
 import { ReplyMd } from "@/components/reply-md";
 
 type Row = { verb?: string; target?: string };
-type Turn = { you: string; reply: string; logs: Row[] };
+// One apparition's share of a turn. Keyed by variant; "" = legacy single-lane rows.
+type Lane = { reply: string; logs: Row[] };
+type Turn = { you: string; lanes: Record<string, Lane> };
+
+const LANE_ORDER: string[] = ["", ...VARIANTS];
 
 // Rebuild the committed conversation from persisted rows. Each user row opens a
-// turn; the following phantom row fills its reply/logs (or an error line).
+// turn; following phantom rows fill their variant's lane (or an error line).
 function messagesToTurns(msgs: StoredMessage[]): Turn[] {
   const turns: Turn[] = [];
   for (const m of msgs) {
     if (m.role === "user") {
-      turns.push({ you: m.content.text ?? "", reply: "", logs: [] });
+      turns.push({ you: m.content.text ?? "", lanes: {} });
     } else if (turns.length) {
       const cur = turns[turns.length - 1];
-      if (m.kind === "error") cur.reply = `The build faltered — ${m.content.message ?? ""}`;
-      else {
-        cur.reply = m.content.reply ?? "";
-        cur.logs = m.content.logs ?? [];
-      }
+      const v = m.content.variant ?? "";
+      cur.lanes[v] =
+        m.kind === "error"
+          ? { reply: `The build faltered — ${m.content.message ?? ""}`, logs: [] }
+          : { reply: m.content.reply ?? "", logs: m.content.logs ?? [] };
     }
   }
   return turns;
 }
+
+// Point the signed preview URL at one apparition's directory.
+function variantUrl(base: string, v: Variant): string {
+  try {
+    const u = new URL(base);
+    u.pathname = `/designs/${v}/`;
+    return u.toString();
+  } catch {
+    return base;
+  }
+}
+
+// An asset row as the panel consumes it (from GET /assets).
+type PanelAsset = {
+  name: string;
+  path?: string;
+  url: string | null;
+  assetType: string;
+  kind: string;
+  origin?: string;
+  note?: string;
+};
 
 type Device = "desktop" | "tablet" | "phone";
 type Tab = "layers" | "inspect" | "vault";
@@ -80,7 +113,84 @@ export function Manifest({
   const b = project.brand;
   const name = b?.name ?? project.name;
   const domain = frameDomain(project);
-  const assets = project.offerings ?? [];
+
+  // the three apparitions
+  const [variant, setVariant] = useState<Variant>(project.chosen_variant ?? "one");
+  const [chosen, setChosen] = useState<Variant | null>(project.chosen_variant ?? null);
+  const [claiming, setClaiming] = useState(false);
+
+  async function claim(v: Variant) {
+    if (claiming) return;
+    setClaiming(true);
+    try {
+      const res = await fetch(`/api/projects/${project.id}/choose`, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ variant: v }),
+      });
+      if (res.ok) setChosen(v);
+    } finally {
+      setClaiming(false);
+    }
+  }
+
+  // the vault's assets (thumbnails + signed URLs); refreshed after builds,
+  // uploads, and removals so conjured imagery appears as it lands
+  const [vaultAssets, setVaultAssets] = useState<PanelAsset[] | null>(null);
+  const [assetBusy, setAssetBusy] = useState(false);
+  const fileRef = useRef<HTMLInputElement>(null);
+  const loadAssets = useCallback(async () => {
+    try {
+      const res = await fetch(`/api/projects/${project.id}/assets`);
+      const data = await res.json();
+      if (res.ok) setVaultAssets(data.assets as PanelAsset[]);
+    } catch {
+      // panel keeps its last known state
+    }
+  }, [project.id]);
+  useEffect(() => {
+    loadAssets();
+  }, [loadAssets]);
+
+  async function uploadAssets(files: FileList | null) {
+    if (!files?.length || assetBusy) return;
+    setAssetBusy(true);
+    try {
+      const fd = new FormData();
+      for (const f of Array.from(files)) fd.append("files", f);
+      await fetch(`/api/projects/${project.id}/assets`, { method: "POST", body: fd });
+      await loadAssets();
+    } finally {
+      setAssetBusy(false);
+      if (fileRef.current) fileRef.current.value = "";
+    }
+  }
+
+  async function deleteAsset(a: PanelAsset) {
+    if (!a.path || assetBusy) return;
+    if (!window.confirm(`Remove ${a.name} from the vault? The site will stop shipping it.`)) return;
+    setAssetBusy(true);
+    try {
+      await fetch(`/api/projects/${project.id}/assets?path=${encodeURIComponent(a.path)}`, {
+        method: "DELETE",
+      });
+      await loadAssets();
+    } finally {
+      setAssetBusy(false);
+    }
+  }
+
+  const assets: PanelAsset[] =
+    vaultAssets ??
+    (project.offerings ?? []).map((o) => ({
+      name: o.name,
+      path: o.path,
+      url: null,
+      assetType: assetTypeOf(o),
+      kind: o.kind,
+      origin: o.origin,
+      note: o.note,
+    }));
 
   // the sandbox chamber
   const [preview, setPreview] = useState<string | null>(null);
@@ -137,7 +247,12 @@ export function Manifest({
       if (!res.ok) throw new Error("reset failed");
       setTurns([]);
       setPending(null);
-      if (scope === "full") setPreviewKey((k) => k + 1);
+      if (scope === "full") {
+        // the summons re-opens: no form is claimed anymore
+        setChosen(null);
+        setVariant("one");
+        setPreviewKey((k) => k + 1);
+      }
     } catch {
       // leave state as-is on failure
     } finally {
@@ -150,17 +265,34 @@ export function Manifest({
     if (!say || building || !preview) return;
     setDraft("");
     setBuilding(true);
-    setPending({ you: say, reply: "", logs: [] });
+    setPending({ you: say, lanes: {} });
+
+    const lane = (p: Turn, v: string): Lane => p.lanes[v] ?? { reply: "", logs: [] };
+    const withLane = (p: Turn, v: string, l: Lane): Turn => ({ ...p, lanes: { ...p.lanes, [v]: l } });
 
     const es = new EventSource(`/api/projects/${project.id}/build?say=${encodeURIComponent(say)}`);
     es.onmessage = (e) => {
       const m = JSON.parse(e.data);
+      const v: string = m.v ?? "";
       switch (m.t) {
         case "log":
-          setPending((p) => (p ? { ...p, logs: [...p.logs, { verb: m.verb, target: m.target }] } : p));
+          setPending((p) => {
+            if (!p) return p;
+            const l = lane(p, v);
+            return withLane(p, v, { ...l, logs: [...l.logs, { verb: m.verb, target: m.target }] });
+          });
           break;
         case "say":
-          setPending((p) => (p ? { ...p, reply: (p.reply ? p.reply + " " : "") + m.text } : p));
+          setPending((p) => {
+            if (!p) return p;
+            const l = lane(p, v);
+            return withLane(p, v, { ...l, reply: (l.reply ? l.reply + " " : "") + m.text });
+          });
+          break;
+        case "variant-done":
+          // this apparition finished — show its fresh form at once
+          setPreviewKey((k) => k + 1);
+          loadAssets();
           break;
         case "done":
           setPending((p) => {
@@ -169,15 +301,25 @@ export function Manifest({
           });
           setBuilding(false);
           setPreviewKey((k) => k + 1);
+          loadAssets();
           es.close();
           break;
         case "error":
-          setPending((p) => {
-            if (p) setTurns((t) => [...t, { ...p, reply: p.reply || `The build faltered — ${m.message}` }]);
-            return null;
-          });
-          setBuilding(false);
-          es.close();
+          if (v) {
+            // one apparition faltered; the others build on
+            setPending((p) => {
+              if (!p) return p;
+              const l = lane(p, v);
+              return withLane(p, v, { ...l, reply: l.reply || `The build faltered — ${m.message}` });
+            });
+          } else {
+            setPending((p) => {
+              if (p) setTurns((t) => [...t, p]);
+              return null;
+            });
+            setBuilding(false);
+            es.close();
+          }
           break;
       }
     };
@@ -283,12 +425,12 @@ export function Manifest({
           <div className="msg phantom">
             <span className="who">Phantom</span>
             <p className="voice-line">
-              The vault holds {name}. Speak — name what this site should be, and I will draw it from
-              the brand.
+              The vault holds {name}. Speak — and three apparitions will each take a different
+              shape: two faithful to the brand, one unbound.
             </p>
             <p className="plain">
-              I read the colors, faces, voice, and hard rules you drew, then write a real site that
-              never crosses them. Try: <b>“build a landing page for {name}.”</b>
+              Compare them in the chamber, claim the one that speaks to you, then refine it here.
+              Try: <b>“build a landing page for {name}.”</b>
             </p>
           </div>
 
@@ -300,22 +442,35 @@ export function Manifest({
                   <p>{t.you}</p>
                 </div>
               </div>
-              {!!t.logs.length && (
-                <div className="lab-log" role="log">
-                  {t.logs.map((l, j) => (
-                    <div className="log-row" key={j}>
-                      <span className={`verb ${(l.verb ?? "").toLowerCase()}`}>{l.verb}</span>
-                      <span className="target">{l.target}</span>
-                    </div>
-                  ))}
-                </div>
-              )}
-              {t.reply && (
-                <div className="msg phantom">
-                  <span className="who">Phantom</span>
-                  <ReplyMd>{t.reply}</ReplyMd>
-                </div>
-              )}
+              {LANE_ORDER.filter((v) => t.lanes[v]).map((v) => {
+                const l = t.lanes[v];
+                return (
+                  <Fragment key={v}>
+                    {v && (
+                      <div className="lane-cap">
+                        APPARITION&nbsp;{VARIANT_META[v as Variant].numeral}&nbsp;·&nbsp;
+                        {VARIANT_META[v as Variant].label}
+                      </div>
+                    )}
+                    {!!l.logs.length && (
+                      <div className="lab-log" role="log">
+                        {l.logs.map((r, j) => (
+                          <div className="log-row" key={j}>
+                            <span className={`verb ${(r.verb ?? "").toLowerCase()}`}>{r.verb}</span>
+                            <span className="target">{r.target}</span>
+                          </div>
+                        ))}
+                      </div>
+                    )}
+                    {l.reply && (
+                      <div className="msg phantom">
+                        <span className="who">Phantom</span>
+                        <ReplyMd>{l.reply}</ReplyMd>
+                      </div>
+                    )}
+                  </Fragment>
+                );
+              })}
             </Fragment>
           ))}
 
@@ -327,23 +482,39 @@ export function Manifest({
                   <p>{pending.you}</p>
                 </div>
               </div>
-              {!!pending.logs.length && (
-                <div className="lab-log" role="log">
-                  {pending.logs.map((l, j) => (
-                    <div className={`log-row${j === pending.logs.length - 1 ? " running" : ""}`} key={j}>
-                      <span className={`verb ${(l.verb ?? "").toLowerCase()}`}>{l.verb}</span>
-                      <span className="target">{l.target}</span>
-                    </div>
-                  ))}
+              {LANE_ORDER.filter((v) => pending.lanes[v]).map((v) => {
+                const l = pending.lanes[v];
+                return (
+                  <Fragment key={v}>
+                    {v && (
+                      <div className="lane-cap">
+                        APPARITION&nbsp;{VARIANT_META[v as Variant].numeral}&nbsp;·&nbsp;
+                        {VARIANT_META[v as Variant].label}
+                      </div>
+                    )}
+                    {!!l.logs.length && (
+                      <div className="lab-log" role="log">
+                        {l.logs.map((r, j) => (
+                          <div className={`log-row${j === l.logs.length - 1 && !l.reply ? " running" : ""}`} key={j}>
+                            <span className={`verb ${(r.verb ?? "").toLowerCase()}`}>{r.verb}</span>
+                            <span className="target">{r.target}</span>
+                          </div>
+                        ))}
+                      </div>
+                    )}
+                    {l.reply && (
+                      <div className="msg phantom">
+                        <span className="who">Phantom</span>
+                        <ReplyMd>{l.reply}</ReplyMd>
+                      </div>
+                    )}
+                  </Fragment>
+                );
+              })}
+              {!Object.keys(pending.lanes).length && (
+                <div className="sys-row">
+                  {chosen ? "THE PHANTOM IS AT WORK…" : "THREE APPARITIONS ARE AT WORK…"}
                 </div>
-              )}
-              {pending.reply ? (
-                <div className="msg phantom">
-                  <span className="who">Phantom</span>
-                  <ReplyMd>{pending.reply}</ReplyMd>
-                </div>
-              ) : (
-                !pending.logs.length && <div className="sys-row">THE PHANTOM IS AT WORK…</div>
               )}
             </>
           )}
@@ -356,7 +527,9 @@ export function Manifest({
               aria-label="Speak to the Phantom"
               placeholder={
                 preview
-                  ? "Speak, and it will take shape…  (⇧↵ newline)"
+                  ? chosen
+                    ? "Speak to the claimed form…  (⇧↵ newline)"
+                    : "Speak — all three apparitions will heed…  (⇧↵ newline)"
                   : "Waiting for the chamber to open…"
               }
               value={draft}
@@ -425,10 +598,48 @@ export function Manifest({
             </svg>
           </button>
         </div>
+        <div className="apparition-row">
+          <div className="apparition-tabs" role="tablist" aria-label="The three apparitions">
+            {VARIANTS.map((v) => (
+              <button
+                key={v}
+                role="tab"
+                aria-selected={variant === v}
+                className={variant === v ? "on" : ""}
+                onClick={() => setVariant(v)}
+              >
+                <b>{VARIANT_META[v].numeral}</b>
+                <span>{VARIANT_META[v].label}</span>
+                {chosen === v && (
+                  <span className="ap-star" aria-label="the claimed form">
+                    ✦
+                  </span>
+                )}
+              </button>
+            ))}
+          </div>
+          <div className="spacer" />
+          {chosen === variant ? (
+            <span className="claimed-note">✦&nbsp;THE&nbsp;CLAIMED&nbsp;FORM</span>
+          ) : (
+            <button
+              className="claim-btn"
+              onClick={() => claim(variant)}
+              disabled={claiming || building || !preview}
+              title="Make this apparition THE site — the conversation will address it alone"
+            >
+              {claiming ? "CLAIMING…" : chosen ? "CLAIM THIS INSTEAD" : "CLAIM THIS FORM"}
+            </button>
+          )}
+        </div>
         <div className="chamber-stage">
           <div className="chamber-frame" style={{ ["--frame-w" as string]: FRAME_W[device] }}>
             {preview ? (
-              <iframe key={previewKey} src={preview} title={`${name} — live preview`} />
+              <iframe
+                key={`${previewKey}-${variant}`}
+                src={variantUrl(preview, variant)}
+                title={`${name} — apparition ${VARIANT_META[variant].numeral}`}
+              />
             ) : booting ? (
               <div className="frame-await">
                 <span className="await-sigil">{SIGIL}</span>
@@ -566,30 +777,60 @@ export function Manifest({
                   </section>
                 )}
 
-                {/* LOGO & ASSETS */}
+                {/* LOGO & ASSETS — the two-way mirror of the VM's public/assets/ */}
                 <section className="v-sec">
                   <div className="v-sec-head">
                     <span>Logo&nbsp;&amp;&nbsp;Assets</span>
-                    <span className="path">brand/assets/</span>
+                    <span className="path">public/assets/</span>
                     <span className="count">{assets.length}</span>
                   </div>
                   <div className="asset-grid">
-                    {assets.slice(0, 5).map((o, i) => (
-                      <div className="asset-tile" key={o.path || i} tabIndex={0} aria-label={o.name}>
-                        <span className="a-kind">{o.kind}</span>
-                        <span className="a-name">{assetTypeOf(o)}</span>
+                    {assets.map((a, i) => (
+                      <div className="asset-tile" key={a.path || i} tabIndex={0} aria-label={a.name}>
+                        {a.url && (a.assetType === "image" || a.assetType === "logo") ? (
+                          // eslint-disable-next-line @next/next/no-img-element -- signed, short-lived storage URL
+                          <img src={a.url} alt={a.name} loading="lazy" />
+                        ) : (
+                          <span className="a-kind">{a.kind}</span>
+                        )}
+                        <span className="a-name" title={a.note || a.name}>
+                          {a.name}
+                        </span>
+                        {a.origin === "conjured" && <span className="a-conjured">CONJURED</span>}
+                        <button
+                          className="a-del"
+                          onClick={() => deleteAsset(a)}
+                          disabled={assetBusy}
+                          aria-label={`Remove ${a.name}`}
+                          title="Remove from the vault and the site"
+                        >
+                          ✕
+                        </button>
                       </div>
                     ))}
-                    <Link className="asset-tile offer" href={`/invocation/${project.id}`}>
+                    <button
+                      className="asset-tile offer"
+                      onClick={() => fileRef.current?.click()}
+                      disabled={assetBusy}
+                      type="button"
+                    >
                       <span className="plus" aria-hidden="true">
                         +
                       </span>
                       <span className="lbl">
-                        OFFER
+                        {assetBusy ? "WORKING…" : "ADD"}
                         <br />
-                        NEW
+                        {assetBusy ? "" : "ASSET"}
                       </span>
-                    </Link>
+                    </button>
+                    <input
+                      ref={fileRef}
+                      type="file"
+                      multiple
+                      hidden
+                      accept="image/*,.svg,.woff,.woff2,.ttf,.otf"
+                      onChange={(e) => uploadAssets(e.target.files)}
+                    />
                   </div>
                   {!!b.logo?.facts?.length && (
                     <div className="v-more">

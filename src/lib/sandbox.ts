@@ -1,26 +1,59 @@
 import { CodeSandbox } from "@codesandbox/sdk";
+import { VARIANTS, VARIANT_META, type AssetFile } from "@/lib/brand";
 
 // The sandbox runtime for the Manifest — a CodeSandbox VM per project that
-// holds a real Vite + React + Tailwind app the Phantom agent builds.
+// holds a real Vite + Tailwind static site (plain HTML/CSS/JS, no framework)
+// the Phantom agent builds. Three designs live side by side under designs/.
 
 const DEV_PORT = 5173;
+
+// Bump when the STARTER layout changes shape; older VMs migrate on connect.
+const STARTER_VERSION = "2";
+const STARTER_MARKER = ".phantom-starter";
 
 function sdk() {
   return new CodeSandbox(process.env.CSB_API_KEY);
 }
 
-// The Vite + React + Tailwind starter every project's site begins from.
+function variantPlaceholder(v: (typeof VARIANTS)[number]): string {
+  const meta = VARIANT_META[v];
+  return `<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Apparition ${meta.numeral} — not yet condensed</title>
+    <link rel="stylesheet" href="./styles.css" />
+  </head>
+  <body class="min-h-screen bg-neutral-950 text-neutral-100 flex items-center justify-center">
+    <main class="text-center px-6">
+      <p class="text-xs tracking-[0.3em] uppercase text-neutral-500 mb-4">Apparition ${meta.numeral} · ${meta.label}</p>
+      <h1 class="text-4xl font-light tracking-tight">This form has not yet condensed.</h1>
+      <p class="mt-4 text-neutral-400">Speak to the Phantom and it will take shape.</p>
+    </main>
+    <script src="./script.js"></script>
+  </body>
+</html>
+`;
+}
+
+const VARIANT_CSS = `@import "tailwindcss";
+
+/* Custom CSS for this design (@font-face, keyframes, bespoke effects) lives below. */
+`;
+
+// The plain-HTML + Tailwind starter every project's site begins from. Vite
+// stays purely as the dev server (HMR + preview); the site itself is static.
 const STARTER: Record<string, string> = {
+  [STARTER_MARKER]: STARTER_VERSION,
   "package.json": JSON.stringify(
     {
       name: "phantom-site",
       private: true,
       type: "module",
       scripts: { dev: "vite --host" },
-      dependencies: { react: "^18.3.1", "react-dom": "^18.3.1" },
       devDependencies: {
         "@anthropic-ai/claude-agent-sdk": "^0.3.207",
-        "@vitejs/plugin-react": "^4.3.4",
         "@tailwindcss/vite": "^4.0.0",
         tailwindcss: "^4.0.0",
         vite: "^6.0.7",
@@ -30,13 +63,15 @@ const STARTER: Record<string, string> = {
     2,
   ),
   "vite.config.js": `import { defineConfig } from 'vite';
-import react from '@vitejs/plugin-react';
 import tailwindcss from '@tailwindcss/vite';
 
 export default defineConfig({
-  plugins: [react(), tailwindcss()],
+  appType: 'mpa',
+  plugins: [tailwindcss()],
   server: { host: true, port: ${DEV_PORT}, strictPort: true, allowedHosts: true },
 });
+`,
+  "styles.css": `@import "tailwindcss";
 `,
   "index.html": `<!doctype html>
 <html lang="en">
@@ -44,40 +79,29 @@ export default defineConfig({
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>Phantom Site</title>
+    <link rel="stylesheet" href="/styles.css" />
   </head>
-  <body>
-    <div id="root"></div>
-    <script type="module" src="/src/main.jsx"></script>
+  <body class="min-h-screen bg-neutral-950 text-neutral-100 flex items-center justify-center">
+    <main class="text-center px-6">
+      <p class="text-xs tracking-[0.3em] uppercase text-neutral-500 mb-4">The vapor is condensing</p>
+      <h1 class="text-4xl font-light tracking-tight">Three forms are taking shape.</h1>
+      <nav class="mt-8 flex gap-6 justify-center text-sm text-neutral-400">
+        <a class="underline underline-offset-4 hover:text-neutral-100" href="/designs/one/">Apparition I</a>
+        <a class="underline underline-offset-4 hover:text-neutral-100" href="/designs/two/">Apparition II</a>
+        <a class="underline underline-offset-4 hover:text-neutral-100" href="/designs/three/">Apparition III</a>
+      </nav>
+    </main>
   </body>
 </html>
 `,
-  "src/main.jsx": `import { StrictMode } from 'react';
-import { createRoot } from 'react-dom/client';
-import App from './App.jsx';
-import './index.css';
-
-createRoot(document.getElementById('root')).render(
-  <StrictMode>
-    <App />
-  </StrictMode>,
-);
-`,
-  "src/index.css": `@import "tailwindcss";
-`,
-  "src/App.jsx": `export default function App() {
-  return (
-    <main className="min-h-screen bg-neutral-950 text-neutral-100 flex items-center justify-center">
-      <div className="text-center">
-        <p className="text-xs tracking-[0.3em] uppercase text-neutral-500 mb-4">
-          The vapor is condensing
-        </p>
-        <h1 className="text-4xl font-light tracking-tight">The form is taking shape.</h1>
-        <p className="mt-4 text-neutral-400">Speak to the Phantom and this site will build itself.</p>
-      </div>
-    </main>
-  );
-}
-`,
+  "public/assets/manifest.json": "[]\n",
+  ...Object.fromEntries(
+    VARIANTS.flatMap((v) => [
+      [`designs/${v}/index.html`, variantPlaceholder(v)],
+      [`designs/${v}/styles.css`, VARIANT_CSS],
+      [`designs/${v}/script.js`, "// Light interactivity for this design lives here.\n"],
+    ]),
+  ),
 };
 
 export type BootResult = { sandboxId: string; previewUrl: string; created: boolean };
@@ -92,7 +116,8 @@ export async function bootSandbox(existingId: string | null): Promise<BootResult
   if (sandboxId) {
     try {
       const sb = await s.sandboxes.resume(sandboxId);
-      const client = await sb.connect();
+      const client = (await sb.connect()) as unknown as SbClient;
+      await ensureStarter(client);
       // ensure the dev server is up (it may have died while hibernated)
       await client.commands.runBackground(
         `pgrep -f 'vite' >/dev/null 2>&1 || npm run dev`,
@@ -135,6 +160,18 @@ export type SbClient = {
   };
 };
 
+// Migrate a VM that predates the current starter layout (e.g. the React-era
+// scaffold): rewrite the scaffold files, drop the dead React app, and let
+// Vite restart itself off the config change. Idempotent and cheap when current.
+export async function ensureStarter(client: SbClient): Promise<void> {
+  const v = (await client.commands.run(`cat ${STARTER_MARKER} 2>/dev/null || true`)).trim();
+  if (v === STARTER_VERSION) return;
+  for (const [path, content] of Object.entries(STARTER)) {
+    await client.fs.writeTextFile(path, content);
+  }
+  await client.commands.run("rm -rf src");
+}
+
 // Resume a sandbox, connect, ensure the dev server is up, and return the client
 // plus a fresh preview URL.
 export async function connectSandbox(
@@ -143,6 +180,7 @@ export async function connectSandbox(
   const s = sdk();
   const sb = await s.sandboxes.resume(sandboxId);
   const client = (await sb.connect()) as unknown as SbClient;
+  await ensureStarter(client);
   await client.commands.runBackground(`pgrep -f 'vite' >/dev/null 2>&1 || npm run dev`);
   const token = await s.hosts.createToken(sandboxId, {
     expiresAt: new Date(Date.now() + 24 * 60 * 60 * 1000),
@@ -152,14 +190,29 @@ export async function connectSandbox(
 }
 
 // Reset a project's site back to the starter scaffold: wipe everything the
-// agent wrote under src/ and restore the original files, then nudge Vite.
+// agent wrote and restore the original files, then nudge Vite.
 export async function resetSandboxFiles(sandboxId: string): Promise<void> {
   const { client } = await connectSandbox(sandboxId);
-  await client.commands.run("rm -rf src");
+  await client.commands.run("rm -rf src designs public");
   for (const [path, content] of Object.entries(STARTER)) {
     await client.fs.writeTextFile(path, content);
   }
   await client.commands.runBackground("pgrep -f 'vite' >/dev/null 2>&1 || npm run dev");
+}
+
+// Push the vault's assets into the VM: sync-assets.mjs downloads what's
+// missing, prunes what was removed, and rewrites public/assets/manifest.json.
+export async function syncAssets(client: SbClient, files: AssetFile[]): Promise<void> {
+  const manifest = files.map((f) => ({
+    file: f.file,
+    type: f.type,
+    ...(f.face ? { face: f.face } : {}),
+    origin: f.origin ?? "offered",
+    ...(f.note ? { note: f.note } : {}),
+  }));
+  const spec = { files: files.map(({ file, url }) => ({ file, url })), manifest };
+  await client.fs.writeTextFile("assets.json", JSON.stringify(spec, null, 2));
+  await client.commands.run("node sync-assets.mjs");
 }
 
 // The agent runner that runs INSIDE the sandbox. It reaches Anthropic only
@@ -170,23 +223,32 @@ export const AGENT_RUNNER = [
   "const prompt = process.env.PHANTOM_PROMPT || '';",
   "const brand = process.env.PHANTOM_BRAND || '{}';",
   "const resume = process.env.PHANTOM_SESSION || '';",
+  "const variant = process.env.PHANTOM_VARIANT || 'one';",
+  "const faithful = process.env.PHANTOM_MODE !== 'unbound';",
+  "const direction = process.env.PHANTOM_DIRECTION || '';",
+  "const dir = 'designs/' + variant;",
   "const pluginBase = (process.env.HOME || '/root') + '/.phantom-plugins';",
   "const plugins = (process.env.PHANTOM_PLUGINS || '').split(',').filter(Boolean)",
   "  .map((n) => pluginBase + '/' + n).filter((p) => existsSync(p))",
   "  .map((path) => ({ type: 'local', path }));",
   "const emit = (o) => console.log(JSON.stringify(o));",
   "const system = [",
-  "  'You are the Phantom — you build a real website inside this Vite + React + Tailwind project (already scaffolded).',",
-  "  'Edit files under src/ (mainly src/App.jsx, and new components under src/). Style everything with Tailwind utility classes.',",
-  "  'For any design or UI work, FIRST invoke the ui-ux-pro-max skill and apply its guidance on styles, color palettes, type pairings, layout, and UX — always subordinate to the brand kit and hard rules below.',",
-  "  'Honor the brand kit below exactly: use its colors (hex), type pairing, and voice; NEVER violate any hard compliance rule.',",
-  "  'Keep the app building: valid JSX and imports. Do not touch package.json, vite.config.js, or node_modules.',",
-  "  'SEE your work before finishing: after building or changing the UI, run `node shot.mjs /tmp/shot.png desktop` (also pass `tablet` or `phone` to check responsive), then Read /tmp/shot.png to view the actual rendered page. Critique it honestly against the brand — layout, spacing, hierarchy, color, contrast, overflow, broken or empty elements — and fix what looks off. Repeat the screenshot until it genuinely looks good.',",
+  "  'You are the Phantom — you build one real static site inside this Vite + Tailwind v4 project: plain HTML, modern CSS, and light vanilla JS. No React, no frameworks, no build steps.',",
+  "  'Your site lives in ' + dir + '/ — edit ONLY inside that directory: index.html, styles.css, script.js (add more pages or partials there if needed, linked relatively). NEVER touch other design directories, the root index.html, package.json, vite.config.js, or node_modules.',",
+  "  'Style with Tailwind utility classes in class attributes; put custom CSS (@font-face, keyframes, bespoke effects) in styles.css BELOW the @import \"tailwindcss\" line.',",
+  "  'Brand assets are served at /assets/<file> (they live in public/assets/). Read public/assets/manifest.json to see what exists — logos, product shots, fonts, conjured imagery. Prefer real assets over placeholders or external stock URLs; load brand fonts with @font-face pointing at /assets/<file>.',",
+  "  'To conjure NEW imagery (hero scenes, product shots, textures, backdrops): run `node image.mjs --provider gemini --prompt \"rich, specific prompt: subject, style, lighting, palette\" --name <slug> --aspect 16:9` (providers gemini | grok; aspects like 1:1, 16:9, 9:16, 4:3, 3:4, 21:9). It saves public/assets/<slug>.png and registers it in the vault — reference it as /assets/<slug>.png.',",
+  "  'For any design or UI work, FIRST invoke the ui-ux-pro-max skill and apply its guidance on styles, color palettes, type pairings, layout, and UX — always subordinate to the rules below.',",
+  "  faithful",
+  "    ? 'Honor the brand kit below exactly: use its colors (hex), type pairing, and voice; NEVER violate any hard compliance rule.'",
+  "    : 'You are the UNBOUND apparition. From the kit below take ONLY the brand name, the real content and offerings, and the HARD compliance rules — those rules are law. Everything else (palette, typography, voice, layout, art direction) you invent fresh: be original and daring, and deliberately depart from the kit look.',",
+  "  direction ? 'ART DIRECTION for this apparition: ' + direction : '',",
+  "  'Keep the site valid: every page a complete HTML document linking its own styles.css. SEE your work before finishing: run `node shot.mjs /tmp/shot.png desktop /' + dir + '/` (also pass tablet or phone to check responsive), then Read /tmp/shot.png to view the actual rendered page. Critique it honestly — layout, spacing, hierarchy, color, contrast, overflow, broken or empty elements — and fix what looks off. Repeat the screenshot until it genuinely looks good.',",
   "  'Work decisively — read only what you need, then write the files. Stop when the change is done and it looks right.',",
   "  '',",
   "  'BRAND KIT (JSON):',",
   "  brand,",
-  "].join(String.fromCharCode(10));",
+  "].filter(Boolean).join(String.fromCharCode(10));",
   "const base = {",
   "  model: 'claude-opus-4-8',",
   "  systemPrompt: system,",
@@ -237,14 +299,70 @@ const SHOT_SCRIPT = [
   "const { chromium } = require('playwright');",
   "const out = process.argv[2] || '/tmp/shot.png';",
   "const device = process.argv[3] || 'desktop';",
+  "const path = process.argv[4] || '/';",
   "const sizes = { desktop: { width: 1280, height: 800 }, tablet: { width: 834, height: 1112 }, phone: { width: 390, height: 844 } };",
   "const viewport = sizes[device] || sizes.desktop;",
   "const b = await chromium.launch();",
   "const p = await b.newPage({ viewport });",
-  "await p.goto('http://localhost:5173', { waitUntil: 'networkidle', timeout: 30000 });",
+  "await p.goto('http://localhost:5173' + path, { waitUntil: 'networkidle', timeout: 30000 });",
   "await p.screenshot({ path: out, fullPage: true });",
   "await b.close();",
-  "console.log('shot saved:', out, '(' + device + ')');",
+  "console.log('shot saved:', out, '(' + device + ' ' + path + ')');",
+].join("\n");
+
+// The image-conjuring tool the agent runs. It reaches Gemini/Grok only through
+// our gateway (/api/img) with the same session token — provider keys never
+// enter this VM. The gateway also registers the asset in the project's vault.
+const IMAGE_SCRIPT = [
+  "import { mkdirSync, writeFileSync, readFileSync } from 'node:fs';",
+  "const args = process.argv.slice(2);",
+  "const arg = (n, d) => { const i = args.indexOf('--' + n); return i > -1 && args[i + 1] ? args[i + 1] : d; };",
+  "const provider = arg('provider', 'gemini');",
+  "const prompt = arg('prompt', '');",
+  "const name = arg('name', 'conjured-' + process.pid).replace(/[^a-zA-Z0-9._-]/g, '-');",
+  "const aspect = arg('aspect', '1:1');",
+  "if (!prompt) { console.error('usage: node image.mjs --provider gemini|grok --prompt \"...\" --name <slug> [--aspect 16:9]'); process.exit(1); }",
+  "const origin = (process.env.ANTHROPIC_BASE_URL || '').replace(/\\/api\\/gw\\/?$/, '');",
+  "const token = process.env.ANTHROPIC_API_KEY || '';",
+  "console.log('conjuring via ' + provider + '…');",
+  "const res = await fetch(origin + '/api/img', {",
+  "  method: 'POST',",
+  "  headers: { 'content-type': 'application/json', authorization: 'Bearer ' + token },",
+  "  body: JSON.stringify({ provider, prompt, name, aspect }),",
+  "});",
+  "if (!res.ok) { console.error('conjuring failed: HTTP ' + res.status + ' — ' + (await res.text()).slice(0, 400)); process.exit(1); }",
+  "const out = await res.json();",
+  "mkdirSync('public/assets', { recursive: true });",
+  "writeFileSync('public/assets/' + out.file, Buffer.from(out.b64, 'base64'));",
+  "let m = []; try { m = JSON.parse(readFileSync('public/assets/manifest.json', 'utf8')); } catch {}",
+  "if (!m.some((e) => e.file === out.file)) m.push({ file: out.file, type: 'image', origin: 'conjured', note: prompt.slice(0, 140) });",
+  "writeFileSync('public/assets/manifest.json', JSON.stringify(m, null, 2));",
+  "console.log('conjured /assets/' + out.file);",
+].join("\n");
+
+// Reconciles public/assets/ against the vault snapshot in assets.json:
+// downloads missing files by signed URL, prunes files no longer in the vault,
+// and rewrites manifest.json. Runs inside the VM (node 20+, global fetch).
+const SYNC_SCRIPT = [
+  "import { readFileSync, writeFileSync, mkdirSync, readdirSync, rmSync, existsSync } from 'node:fs';",
+  "const spec = JSON.parse(readFileSync('assets.json', 'utf8'));",
+  "mkdirSync('public/assets', { recursive: true });",
+  "const keep = new Set(spec.files.map((f) => f.file));",
+  "keep.add('manifest.json');",
+  "for (const f of readdirSync('public/assets')) {",
+  "  if (!keep.has(f)) rmSync('public/assets/' + f, { force: true, recursive: true });",
+  "}",
+  "for (const f of spec.files) {",
+  "  const p = 'public/assets/' + f.file;",
+  "  if (existsSync(p) || !f.url) continue;",
+  "  try {",
+  "    const r = await fetch(f.url);",
+  "    if (!r.ok) { console.error('skip ' + f.file + ': HTTP ' + r.status); continue; }",
+  "    writeFileSync(p, Buffer.from(await r.arrayBuffer()));",
+  "  } catch (e) { console.error('skip ' + f.file + ': ' + e.message); }",
+  "}",
+  "writeFileSync('public/assets/manifest.json', JSON.stringify(spec.manifest, null, 2));",
+  "console.log('assets in sync: ' + spec.files.length);",
 ].join("\n");
 
 // Skill plugins cloned into the VM and handed to the agent via the SDK's
@@ -256,11 +374,13 @@ const AGENT_PLUGINS: { name: string; repo: string }[] = [
 // passed to the runner as PHANTOM_PLUGINS so it can resolve the cloned dirs
 export const AGENT_PLUGIN_NAMES = AGENT_PLUGINS.map((p) => p.name).join(",");
 
-// Write the runner, ensure the Agent SDK is installed, and clone the skill
-// plugins into the VM.
+// Write the runner + tool scripts, ensure the Agent SDK is installed, and
+// clone the skill plugins into the VM.
 export async function ensureBuilder(client: SbClient): Promise<void> {
   await client.fs.writeTextFile("agent-runner.mjs", AGENT_RUNNER);
   await client.fs.writeTextFile("shot.mjs", SHOT_SCRIPT);
+  await client.fs.writeTextFile("image.mjs", IMAGE_SCRIPT);
+  await client.fs.writeTextFile("sync-assets.mjs", SYNC_SCRIPT);
   await client.commands.run(
     "node -e \"require.resolve('@anthropic-ai/claude-agent-sdk')\" 2>/dev/null || npm install @anthropic-ai/claude-agent-sdk@0.3.207",
   );

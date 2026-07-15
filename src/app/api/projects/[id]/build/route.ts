@@ -1,16 +1,26 @@
 import { type NextRequest } from "next/server";
 import { createClient } from "@/lib/supabase/server";
-import { bootSandbox, connectSandbox, ensureBuilder, AGENT_PLUGIN_NAMES } from "@/lib/sandbox";
+import { bootSandbox, connectSandbox, ensureBuilder, syncAssets, AGENT_PLUGIN_NAMES, type SbClient } from "@/lib/sandbox";
+import { buildAssetFiles } from "@/lib/assets";
 import { mintSessionToken } from "@/lib/gateway-token";
-import type { Brand } from "@/lib/brand";
+import { VARIANTS, VARIANT_META, type Brand, type Offering, type Variant } from "@/lib/brand";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 export const maxDuration = 300;
 
-// A build turn: the invoker speaks, the Phantom agent (running inside the
-// sandbox, reaching Anthropic only through our gateway) edits the site. The
-// agent's tool calls and words stream to the chat; Vite HMR updates the preview.
+// The two art directions the faithful apparitions diverge along on the first
+// summon; the third apparition is unbound and invents its own.
+const DIRECTIONS: Partial<Record<Variant, string>> = {
+  one: "Editorial restraint — generous whitespace, an asymmetric grid, a type-led hero, quiet motion. Let the brand breathe.",
+  two: "Immersive boldness — full-bleed imagery, layered depth, oversized display type, confident use of the accent color. Let the brand perform.",
+};
+
+// A build turn: the invoker speaks, the Phantom agents (running inside the
+// sandbox, reaching Anthropic only through our gateway) edit the site. Before
+// a form is claimed, all three apparitions heed every word in parallel; after
+// claiming, only the chosen one builds. Tool calls and words stream to the
+// chat tagged by variant; Vite HMR updates the preview.
 export async function GET(req: NextRequest, ctx: { params: Promise<{ id: string }> }) {
   const { id } = await ctx.params;
   const say = (req.nextUrl.searchParams.get("say") ?? "").trim();
@@ -23,10 +33,16 @@ export async function GET(req: NextRequest, ctx: { params: Promise<{ id: string 
 
   const { data: project } = await supabase
     .from("phantom_projects")
-    .select("id, sandbox_id, brand, agent_session_id")
+    .select("id, sandbox_id, brand, offerings, chosen_variant, agent_sessions")
     .eq("id", id)
     .maybeSingle();
   if (!project) return new Response("not found", { status: 404 });
+
+  const chosen = (project.chosen_variant as Variant | null) ?? null;
+  const targets: Variant[] = chosen ? [chosen] : [...VARIANTS];
+  const sessions: Partial<Record<Variant, string>> = {
+    ...((project.agent_sessions as Partial<Record<Variant, string>>) ?? {}),
+  };
 
   const encoder = new TextEncoder();
   const stream = new ReadableStream({
@@ -42,24 +58,6 @@ export async function GET(req: NextRequest, ctx: { params: Promise<{ id: string 
         if (closed) return;
         closed = true;
         controller.close();
-      };
-
-      // accumulate the turn so it can be persisted durably (survives reload)
-      const accLogs: { verb?: string; target?: string }[] = [];
-      let accReply = "";
-      let accError: string | null = null;
-      let sessionId: string | null = null;
-      let phantomSaved = false;
-      const savePhantom = async () => {
-        if (phantomSaved) return;
-        phantomSaved = true;
-        const content = accError ? { message: accError } : { reply: accReply, logs: accLogs };
-        await supabase.from("phantom_messages").insert({
-          project_id: id,
-          role: "phantom",
-          kind: accError ? "error" : "say",
-          content,
-        });
       };
 
       try {
@@ -86,74 +84,106 @@ export async function GET(req: NextRequest, ctx: { params: Promise<{ id: string 
         const { client } = await connectSandbox(sandboxId);
         await ensureBuilder(client);
 
+        // the vault's assets must be on disk before the agents reach for them
+        try {
+          const files = await buildAssetFiles((project.offerings as Offering[]) ?? [], project.brand as Brand | null);
+          await syncAssets(client, files);
+        } catch {
+          send({ t: "log", verb: "SYNC", target: "the vault would not fully sync — continuing" });
+        }
+
         const token = mintSessionToken(id);
         const gateway = `${process.env.APP_URL}/api/gw`;
-        const cmd = await client.commands.runBackground("node agent-runner.mjs", {
-          env: {
-            ANTHROPIC_BASE_URL: gateway,
-            ANTHROPIC_API_KEY: token,
-            IS_SANDBOX: "1", // CSB VMs run as root; let Claude Code bypass permissions
-            PHANTOM_PROMPT: say,
-            PHANTOM_BRAND: JSON.stringify((project.brand as Brand | null) ?? {}),
-            PHANTOM_PLUGINS: AGENT_PLUGIN_NAMES, // ui-ux-pro-max + fullstack-dev-skills
-
-            // resume the prior Agent SDK session so the Phantom recalls the conversation
-            ...(project.agent_session_id
-              ? { PHANTOM_SESSION: project.agent_session_id as string }
-              : {}),
-          },
-        });
-
+        const brandJson = JSON.stringify((project.brand as Brand | null) ?? {});
         const timer = setInterval(beat, 4000);
-        let buf = "";
-        const handle = (line: string) => {
-          const s = line.trim();
-          if (!s) return;
-          let m: { t?: string; verb?: string; target?: string; text?: string; message?: string; id?: string };
-          try {
-            m = JSON.parse(s);
-          } catch {
-            return; // ignore non-JSON stdout noise
-          }
-          if (m.t === "tool") {
-            send({ t: "log", verb: m.verb, target: m.target });
-            accLogs.push({ verb: m.verb, target: m.target });
-          } else if (m.t === "text" && m.text) {
-            send({ t: "say", text: m.text });
-            accReply += (accReply ? " " : "") + m.text;
-          } else if (m.t === "session" && m.id) {
-            sessionId = m.id;
-          } else if (m.t === "error") {
-            send({ t: "error", message: m.message });
-            accError = m.message ?? "The build faltered.";
-          }
+
+        const runVariant = async (v: Variant): Promise<void> => {
+          // each apparition accumulates + persists its own turn
+          const accLogs: { verb?: string; target?: string }[] = [];
+          let accReply = "";
+          let accError: string | null = null;
+
+          const cmd = await (client as SbClient).commands.runBackground("node agent-runner.mjs", {
+            env: {
+              ANTHROPIC_BASE_URL: gateway,
+              ANTHROPIC_API_KEY: token,
+              IS_SANDBOX: "1", // CSB VMs run as root; let Claude Code bypass permissions
+              PHANTOM_PROMPT: say,
+              PHANTOM_BRAND: brandJson,
+              PHANTOM_PLUGINS: AGENT_PLUGIN_NAMES,
+              PHANTOM_VARIANT: v,
+              PHANTOM_MODE: VARIANT_META[v].mode,
+              // art direction only seeds the first summon; after that the
+              // conversation itself steers each apparition
+              ...(sessions[v] ? { PHANTOM_SESSION: sessions[v] } : { PHANTOM_DIRECTION: DIRECTIONS[v] ?? "" }),
+            },
+          });
+
+          let buf = "";
+          const handle = (line: string) => {
+            const s = line.trim();
+            if (!s) return;
+            let m: { t?: string; verb?: string; target?: string; text?: string; message?: string; id?: string };
+            try {
+              m = JSON.parse(s);
+            } catch {
+              return; // ignore non-JSON stdout noise
+            }
+            if (m.t === "tool") {
+              send({ t: "log", v, verb: m.verb, target: m.target });
+              accLogs.push({ verb: m.verb, target: m.target });
+            } else if (m.t === "text" && m.text) {
+              send({ t: "say", v, text: m.text });
+              accReply += (accReply ? " " : "") + m.text;
+            } else if (m.t === "session" && m.id) {
+              sessions[v] = m.id;
+            } else if (m.t === "error") {
+              send({ t: "error", v, message: m.message });
+              accError = m.message ?? "The build faltered.";
+            }
+          };
+
+          cmd.onOutput((chunk) => {
+            buf += chunk;
+            const lines = buf.split("\n");
+            buf = lines.pop() ?? "";
+            for (const l of lines) handle(l);
+          });
+
+          await new Promise<void>((resolve) => {
+            cmd.onStatusChange((st) => {
+              if (st === "FINISHED" || st === "ERROR" || st === "KILLED") resolve();
+            });
+          });
+          if (buf) handle(buf);
+
+          const content = accError
+            ? { variant: v, message: accError }
+            : { variant: v, reply: accReply, logs: accLogs };
+          await supabase.from("phantom_messages").insert({
+            project_id: id,
+            role: "phantom",
+            kind: accError ? "error" : "say",
+            content,
+          });
+          send({ t: "variant-done", v });
         };
 
-        cmd.onOutput((chunk) => {
-          buf += chunk;
-          const lines = buf.split("\n");
-          buf = lines.pop() ?? "";
-          for (const l of lines) handle(l);
-        });
-
-        await new Promise<void>((resolve) => {
-          cmd.onStatusChange((st) => {
-            if (st === "FINISHED" || st === "ERROR" || st === "KILLED") resolve();
-          });
-        });
+        await Promise.all(targets.map((v) => runVariant(v).catch(() => send({ t: "variant-done", v }))));
 
         clearInterval(timer);
-        if (buf) handle(buf);
-        await savePhantom();
-        const upd: Record<string, unknown> = { updated_at: new Date().toISOString() };
-        if (sessionId && sessionId !== project.agent_session_id) upd.agent_session_id = sessionId;
-        await supabase.from("phantom_projects").update(upd).eq("id", id);
+        await supabase
+          .from("phantom_projects")
+          .update({ agent_sessions: sessions, updated_at: new Date().toISOString() })
+          .eq("id", id);
         send({ t: "done" });
       } catch (err) {
         const message = err instanceof Error ? err.message : "The build slipped away.";
         send({ t: "error", message });
-        accError = accError ?? message;
-        await savePhantom().catch(() => {});
+        await supabase
+          .from("phantom_messages")
+          .insert({ project_id: id, role: "phantom", kind: "error", content: { message } })
+          .then(undefined, () => {});
       } finally {
         finish();
       }
