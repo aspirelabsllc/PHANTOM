@@ -486,6 +486,12 @@ export function Manifest({
             </Fragment>
           ))}
 
+          {!pending && project.building?.started_at && (
+            <div className="sys-row">
+              APPARITIONS ARE AT WORK FROM A PAST WORD — RELOAD WHEN THEY SETTLE
+            </div>
+          )}
+
           {pending && (
             <>
               <div className="msg user">

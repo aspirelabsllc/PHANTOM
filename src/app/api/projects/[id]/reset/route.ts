@@ -1,7 +1,6 @@
 import { NextResponse, type NextRequest } from "next/server";
 import { createClient } from "@/lib/supabase/server";
 import { resetSandboxFiles } from "@/lib/sandbox";
-import { releaseBuildLock } from "@/lib/build-lock";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -27,21 +26,21 @@ export async function POST(req: NextRequest, ctx: { params: Promise<{ id: string
   if (!project) return NextResponse.json({ error: "not found" }, { status: 404 });
 
   try {
-    // reset the site first (the slow part) so a failure leaves the chat intact
+    // reset the site first (the slow part) so a failure leaves the chat intact;
+    // resetSandboxFiles also kills any apparitions still building
     if (scope === "full" && project.sandbox_id) {
       await resetSandboxFiles(project.sandbox_id);
-      // the killed agents' build turn will never finish — free the project
-      releaseBuildLock(id);
     }
     // clear the conversation + agent sessions in both cases; a full reset
-    // also un-claims the chosen form (the summons re-opens)
+    // also un-claims the chosen form and frees the chamber (the killed
+    // agents' turn will never report home)
     await supabase.from("phantom_messages").delete().eq("project_id", id);
     await supabase
       .from("phantom_projects")
       .update({
         agent_session_id: null,
         agent_sessions: {},
-        ...(scope === "full" ? { chosen_variant: null } : {}),
+        ...(scope === "full" ? { chosen_variant: null, building: null } : {}),
       })
       .eq("id", id);
     return NextResponse.json({ ok: true, scope });

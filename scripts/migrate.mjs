@@ -53,6 +53,30 @@ returns void language sql security definer set search_path = public as $$
    where id = pid;
 $$;
 
+-- the in-flight build turn: {started_at, expect:[variants], got:[variants]}.
+-- null = no build running. Set by the build route, cleared atomically as the
+-- VM-side runners report in (survives route death and app restarts).
+alter table public.phantom_projects add column if not exists building jsonb;
+
+-- a runner finished: merge its session, mark its variant done, and clear
+-- building when every expected variant has reported. Row lock serializes
+-- concurrent finishers.
+create or replace function public.phantom_finish_variant(pid uuid, v text, sess text)
+returns void language sql security definer set search_path = public as $$
+  update public.phantom_projects
+     set agent_sessions = coalesce(agent_sessions, '{}'::jsonb)
+           || case when sess is null or sess = '' then '{}'::jsonb
+                   else jsonb_build_object(v, sess) end,
+         building = case
+           when building is null then null
+           when (building->'expect') <@ (coalesce(building->'got', '[]'::jsonb) || jsonb_build_array(v))
+             then null
+           else jsonb_set(building, '{got}', coalesce(building->'got', '[]'::jsonb) || jsonb_build_array(v))
+         end,
+         updated_at = now()
+   where id = pid;
+$$;
+
 alter table public.phantom_projects enable row level security;
 
 drop policy if exists "own_select" on public.phantom_projects;

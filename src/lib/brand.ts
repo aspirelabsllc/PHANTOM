@@ -153,6 +153,7 @@ export type Project = {
   sandbox_id: string | null;
   chosen_variant: Variant | null;
   agent_sessions: Partial<Record<Variant, string>>;
+  building: { started_at?: string; expect?: Variant[]; got?: Variant[] } | null;
   created_at: string;
   updated_at: string;
 };
