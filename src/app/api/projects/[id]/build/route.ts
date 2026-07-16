@@ -9,6 +9,11 @@ export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 export const maxDuration = 300;
 
+// One live build per project (single Railway instance, so in-memory holds).
+// TTL guards against a crashed turn wedging the project forever.
+const ACTIVE_BUILDS = new Map<string, number>();
+const LOCK_TTL = 30 * 60 * 1000;
+
 // The two art directions the faithful apparitions diverge along on the first
 // summon; the third apparition is unbound and invents its own.
 const DIRECTIONS: Partial<Record<Variant, string>> = {
@@ -45,19 +50,42 @@ export async function GET(req: NextRequest, ctx: { params: Promise<{ id: string 
   };
 
   const encoder = new TextEncoder();
+  // The stream to the browser is best-effort: Railway's edge cuts SSE at
+  // ~15 min and the invoker may navigate away. The build itself must keep
+  // going and persisting regardless, so nothing here may ever throw.
+  let closed = false;
+  let timer: ReturnType<typeof setInterval> | null = null;
+  let lockOwned = false;
   const stream = new ReadableStream({
     async start(controller) {
-      let closed = false;
       const send = (o: unknown) => {
-        if (!closed) controller.enqueue(encoder.encode(`data: ${JSON.stringify(o)}\n\n`));
+        if (closed) return;
+        try {
+          controller.enqueue(encoder.encode(`data: ${JSON.stringify(o)}\n\n`));
+        } catch {
+          closed = true; // the invoker is gone; the build carries on silently
+        }
       };
       const beat = () => {
-        if (!closed) controller.enqueue(encoder.encode(`: keepalive\n\n`));
+        if (closed) {
+          if (timer) clearInterval(timer);
+          return;
+        }
+        try {
+          controller.enqueue(encoder.encode(`: keepalive\n\n`));
+        } catch {
+          closed = true;
+          if (timer) clearInterval(timer);
+        }
       };
       const finish = () => {
         if (closed) return;
         closed = true;
-        controller.close();
+        try {
+          controller.close();
+        } catch {
+          // already torn down by the disconnect
+        }
       };
 
       try {
@@ -65,6 +93,20 @@ export async function GET(req: NextRequest, ctx: { params: Promise<{ id: string 
           send({ t: "error", message: "Say what to build." });
           return finish();
         }
+
+        // one build per project — concurrent summons would fight over the
+        // same design dirs and sessions
+        const lockedAt = ACTIVE_BUILDS.get(id);
+        if (lockedAt && Date.now() - lockedAt < LOCK_TTL) {
+          send({
+            t: "error",
+            message:
+              "The apparitions are still at work on your last word. Let them finish — their forms and words will appear when they settle.",
+          });
+          return finish();
+        }
+        ACTIVE_BUILDS.set(id, Date.now());
+        lockOwned = true;
 
         // record the invoker's words durably before any work begins
         await supabase
@@ -99,7 +141,7 @@ export async function GET(req: NextRequest, ctx: { params: Promise<{ id: string 
         }
 
         const brandJson = JSON.stringify((project.brand as Brand | null) ?? {});
-        const timer = setInterval(beat, 4000);
+        timer = setInterval(beat, 4000);
 
         const runVariant = async (v: Variant): Promise<void> => {
           // each apparition accumulates + persists its own turn
@@ -173,6 +215,12 @@ export async function GET(req: NextRequest, ctx: { params: Promise<{ id: string 
             kind: accError ? "error" : "say",
             content,
           });
+          // persist sessions as each apparition settles — the stream to the
+          // browser may be long dead by the time the last one finishes
+          await supabase
+            .from("phantom_projects")
+            .update({ agent_sessions: sessions, updated_at: new Date().toISOString() })
+            .eq("id", id);
           send({ t: "variant-done", v });
         };
 
@@ -181,7 +229,6 @@ export async function GET(req: NextRequest, ctx: { params: Promise<{ id: string 
         // pull any plugin-conjured imagery into the vault
         await client.commands.run("node register-assets.mjs", { env: gwEnv }).catch(() => {});
 
-        clearInterval(timer);
         await supabase
           .from("phantom_projects")
           .update({ agent_sessions: sessions, updated_at: new Date().toISOString() })
@@ -195,8 +242,16 @@ export async function GET(req: NextRequest, ctx: { params: Promise<{ id: string 
           .insert({ project_id: id, role: "phantom", kind: "error", content: { message } })
           .then(undefined, () => {});
       } finally {
+        if (timer) clearInterval(timer);
+        if (lockOwned) ACTIVE_BUILDS.delete(id);
         finish();
       }
+    },
+    cancel() {
+      // browser went away (tab closed, edge timeout) — stop the heartbeat;
+      // the build keeps running to completion above
+      closed = true;
+      if (timer) clearInterval(timer);
     },
   });
 

@@ -327,7 +327,15 @@ export function Manifest({
       es.close();
       setBuilding(false);
       setPending((p) => {
-        if (p) setTurns((t) => [...t, p]);
+        if (p) {
+          // the stream was severed (edge timeout / network), not the build —
+          // the apparitions finish server-side and persist their words
+          const note =
+            "The chamber lost the stream, but the apparitions build on. Their forms and words will be here when they settle — return and reload in a few minutes.";
+          const hasWords = Object.values(p.lanes).some((l) => l.reply);
+          const lanes = hasWords ? p.lanes : { ...p.lanes, "": { reply: note, logs: [] } };
+          setTurns((t) => [...t, { ...p, lanes }]);
+        }
         return null;
       });
     };
