@@ -257,6 +257,12 @@ export function Manifest({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [lastSeq]);
 
+  // the daemon finished registering conjured imagery — pull the fresh vault
+  useEffect(() => {
+    if (daemon.assetsSignal > 0) loadAssets();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [daemon.assetsSignal]);
+
   // keep the chat pinned to the latest message as it streams
   const scrollRef = useRef<HTMLDivElement>(null);
   useEffect(() => {

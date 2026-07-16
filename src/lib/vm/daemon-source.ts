@@ -8,12 +8,12 @@
 // daemon code — use string concatenation.
 
 // Bump to force a daemon respawn on deploy (ensureDaemon compares /health).
-export const DAEMON_VERSION = "3";
+export const DAEMON_VERSION = "4";
 
 export const DAEMON_SOURCE = `// phantom-daemon.mjs (generated — do not edit in the VM)
 import { createServer } from 'node:http';
 import { readFileSync, writeFileSync } from 'node:fs';
-import { execSync } from 'node:child_process';
+import { execSync, spawn } from 'node:child_process';
 import { query } from '@anthropic-ai/claude-agent-sdk';
 
 const VERSION = '${DAEMON_VERSION}';
@@ -222,12 +222,28 @@ function pushDelta(parent, text) {
   }, 180);
 }
 
+function registerAssets() {
+  // upload any imagery the turn conjured into the vault so it shows in the
+  // panel and survives the next build's prune. Runs async (spawn, not execSync)
+  // so a slow upload never blocks the daemon's SSE / interrupt loop; emits an
+  // 'assets' event when done so the UI refreshes the vault.
+  try {
+    const child = spawn('node', ['register-assets.mjs'], {
+      env: Object.assign({}, process.env, { ANTHROPIC_API_KEY: gwToken }),
+      stdio: 'ignore',
+    });
+    child.on('close', () => emit('assets', {}, true));
+    child.on('error', () => {});
+  } catch {}
+}
+
 function commitTurn() {
   try {
     execSync('git add -A && (git diff --cached --quiet || git commit -q -m ' + JSON.stringify('turn: ' + lastUserText.slice(0, 60)) + ')', { timeout: 30000 });
     const sha = execSync('git rev-parse --short HEAD', { timeout: 5000 }).toString().trim();
     emit('checkpoint', { sha: sha });
   } catch {}
+  registerAssets();
 }
 
 function handle(m) {

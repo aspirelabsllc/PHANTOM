@@ -14,6 +14,7 @@ export type DaemonState = {
   status: "connecting" | "idle" | "working" | "offline";
   tool: DaemonTool;
   queue: { id: string; text: string }[];
+  assetsSignal: number; // bumps when the daemon finishes registering imagery
   say: (text: string, images?: { media_type: string; data: string }[]) => Promise<void>;
   stop: () => Promise<void>;
   rewind: (sha: string) => Promise<boolean>;
@@ -37,6 +38,7 @@ export function useDaemon(projectId: string, initialEvents: PhantomEvent[], enab
   const [tool, setTool] = useState<DaemonTool>(null);
   const [queue, setQueue] = useState<{ id: string; text: string }[]>([]);
   const [saying, setSaying] = useState(false);
+  const [assetsSignal, setAssetsSignal] = useState(0);
 
   const daemonRef = useRef<DaemonRef | null>(null);
   const esRef = useRef<EventSource | null>(null);
@@ -73,6 +75,9 @@ export function useDaemon(projectId: string, initialEvents: PhantomEvent[], enab
         case "turn_start":
           setDeltas({});
           setQueue((q) => q.slice(1));
+          return;
+        case "assets":
+          setAssetsSignal((n) => n + 1);
           return;
         case "init":
         case "notice":
@@ -197,5 +202,5 @@ export function useDaemon(projectId: string, initialEvents: PhantomEvent[], enab
     return !!res?.ok;
   }, []);
 
-  return { events, deltas, status, tool, queue, say, stop, rewind, saying };
+  return { events, deltas, status, tool, queue, assetsSignal, say, stop, rewind, saying };
 }
