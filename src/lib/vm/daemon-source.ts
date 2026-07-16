@@ -8,7 +8,7 @@
 // daemon code — use string concatenation.
 
 // Bump to force a daemon respawn on deploy (ensureDaemon compares /health).
-export const DAEMON_VERSION = "2";
+export const DAEMON_VERSION = "3";
 
 export const DAEMON_SOURCE = `// phantom-daemon.mjs (generated — do not edit in the VM)
 import { createServer } from 'node:http';
@@ -128,6 +128,7 @@ let liveQuery = null;
 let inFlight = null;
 let sawTurnActivity = false;
 let pendingRestart = false;
+let interrupting = false;
 let turnCounter = 0;
 
 function makeInput() {
@@ -312,6 +313,15 @@ async function runForever() {
     } catch (e) {
       liveQuery = null;
       const msg = String((e && e.message) || e);
+      // an intentional interrupt tears the stream down (killed workers) — that
+      // is not a failure to retry; drop the turn and wait for the next word
+      if (interrupting) {
+        interrupting = false;
+        inFlight = null;
+        attempt = 0;
+        if (status !== 'idle' && !queue.length) setStatus('idle');
+        continue;
+      }
       if (inFlight && !sawTurnActivity) queue.unshift(inFlight);
       inFlight = null;
       if (transient(msg) && attempt < 6) {
@@ -397,7 +407,12 @@ const server = createServer(async (req, res) => {
 
   if (url.pathname === '/interrupt' && req.method === 'POST') {
     queue.length = 0;
+    interrupting = true;
     try { if (liveQuery) await liveQuery.interrupt(); } catch {}
+    // hard stop: the main interrupt may not reach subagent CLI workers already
+    // dispatched for parallel Tasks — kill them so work actually ceases. The
+    // [c] bracket trick keeps this pkill from matching the daemon's own node.
+    try { execSync("pkill -f '[c]laude' 2>/dev/null; pkill -f 'agent-sdk' 2>/dev/null; true", { timeout: 5000 }); } catch {}
     emit('interrupted', {});
     setStatus('idle');
     return json(res, 200, { ok: true });
