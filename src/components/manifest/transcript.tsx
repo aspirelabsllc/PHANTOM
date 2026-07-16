@@ -43,10 +43,16 @@ const TOOL_VERB: Record<string, string> = {
   Glob: "SCAN",
   Grep: "SCAN",
   Task: "SUMMON",
+  Agent: "SUMMON",
   WebSearch: "SEEK",
   WebFetch: "FETCH",
   Skill: "SKILL",
 };
+
+// The subagent-spawning tool is named "Task" on some CLIs, "Agent" on others.
+function isSummon(name: string): boolean {
+  return name === "Task" || name === "Agent";
+}
 
 function verbOf(name: string): string {
   if (name.startsWith("mcp__playwright")) return "BROWSE";
@@ -295,7 +301,7 @@ function ItemList({
   // group consecutive plain tools into one log block, Claude Code style
   const blocks: (Item | { kind: "tools"; tools: ToolItem[] })[] = [];
   for (const it of items) {
-    if (it.kind === "tool" && it.name !== "Task") {
+    if (it.kind === "tool" && !isSummon(it.name)) {
       const last = blocks[blocks.length - 1];
       if (last && last.kind === "tools") last.tools.push(it);
       else blocks.push({ kind: "tools", tools: [it] });

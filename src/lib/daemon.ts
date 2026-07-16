@@ -60,8 +60,19 @@ export async function ensureProjectDaemon(project: ProjectRow): Promise<DaemonHa
   await ensureBuilder(client);
   await writeClaudeMd(client, project.brand ?? null, project.chosen_variant ?? null);
 
+  // the current DB max seq — a fresh VM's daemon seeds from this so its event
+  // stream never collides with events an earlier VM already persisted
+  const { data: top } = await admin
+    .from("phantom_events")
+    .select("seq")
+    .eq("project_id", project.id)
+    .order("seq", { ascending: false })
+    .limit(1)
+    .maybeSingle();
+  const seqBase = (top?.seq as number | undefined) ?? 0;
+
   const token = mintSessionToken(project.id, "daemon");
-  await ensureDaemon(client, { token, secret, projectId: project.id });
+  await ensureDaemon(client, { token, secret, projectId: project.id, seqBase });
 
   const url = await daemonHostUrl(boot.sandboxId);
   return { client, sandboxId: boot.sandboxId, secret, url, token, created: boot.created };

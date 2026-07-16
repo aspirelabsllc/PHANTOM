@@ -390,6 +390,7 @@ export type DaemonEnv = {
   token: string; // gateway session token (daemon kind)
   secret: string; // shared control-auth secret
   projectId: string;
+  seqBase: number; // current DB max seq — keeps a fresh VM's stream monotonic
 };
 
 // Make sure the daemon process is running and current. Respawns on version
@@ -409,6 +410,7 @@ export async function ensureDaemon(client: SbClient, env: DaemonEnv): Promise<vo
       PHANTOM_ORIGIN: process.env.APP_URL ?? "",
       PHANTOM_DAEMON_SECRET: env.secret,
       PHANTOM_PROJECT: env.projectId,
+      PHANTOM_SEQ_BASE: String(env.seqBase || 0),
       PHANTOM_PLUGINS: AGENT_PLUGIN_NAMES,
       ...(process.env.GEMINI_API_KEY ? { GEMINI_API_KEY: process.env.GEMINI_API_KEY } : {}),
       ...(process.env.XAI_API_KEY ? { XAI_API_KEY: process.env.XAI_API_KEY } : {}),

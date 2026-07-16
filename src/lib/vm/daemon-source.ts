@@ -8,7 +8,7 @@
 // daemon code — use string concatenation.
 
 // Bump to force a daemon respawn on deploy (ensureDaemon compares /health).
-export const DAEMON_VERSION = "1";
+export const DAEMON_VERSION = "2";
 
 export const DAEMON_SOURCE = `// phantom-daemon.mjs (generated — do not edit in the VM)
 import { createServer } from 'node:http';
@@ -29,6 +29,10 @@ const TOOLS = HOME + '/.phantom-tools';
 // ---------- persistent state ----------
 let state = { sessionId: '', seq: 0 };
 try { state = Object.assign(state, JSON.parse(readFileSync(STATE_FILE, 'utf8'))); } catch {}
+// Never reuse a seq the DB already holds: a recreated VM starts with a fresh
+// state file (seq 0) but the project's phantom_events still carry old seqs.
+// The app passes the current DB max so our stream stays strictly monotonic.
+state.seq = Math.max(state.seq, Number(process.env.PHANTOM_SEQ_BASE || 0));
 let stateDirty = false;
 function saveState() { stateDirty = true; }
 setInterval(() => {
