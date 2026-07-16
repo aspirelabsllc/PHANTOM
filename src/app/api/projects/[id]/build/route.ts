@@ -84,16 +84,20 @@ export async function GET(req: NextRequest, ctx: { params: Promise<{ id: string 
         const { client } = await connectSandbox(sandboxId);
         await ensureBuilder(client);
 
-        // the vault's assets must be on disk before the agents reach for them
+        const token = mintSessionToken(id);
+        const gateway = `${process.env.APP_URL}/api/gw`;
+        const gwEnv = { ANTHROPIC_BASE_URL: gateway, ANTHROPIC_API_KEY: token };
+
+        // catch imagery a crashed turn left unregistered (sync would prune it),
+        // then lay the vault's assets on disk before the agents reach for them
         try {
+          await client.commands.run("node register-assets.mjs", { env: gwEnv });
           const files = await buildAssetFiles((project.offerings as Offering[]) ?? [], project.brand as Brand | null);
           await syncAssets(client, files);
         } catch {
           send({ t: "log", verb: "SYNC", target: "the vault would not fully sync — continuing" });
         }
 
-        const token = mintSessionToken(id);
-        const gateway = `${process.env.APP_URL}/api/gw`;
         const brandJson = JSON.stringify((project.brand as Brand | null) ?? {});
         const timer = setInterval(beat, 4000);
 
@@ -105,9 +109,12 @@ export async function GET(req: NextRequest, ctx: { params: Promise<{ id: string 
 
           const cmd = await (client as SbClient).commands.runBackground("node agent-runner.mjs", {
             env: {
-              ANTHROPIC_BASE_URL: gateway,
-              ANTHROPIC_API_KEY: token,
+              ...gwEnv,
               IS_SANDBOX: "1", // CSB VMs run as root; let Claude Code bypass permissions
+              // the image plugin's shell scripts call Gemini/xAI directly from
+              // the VM (Salman's call: plugin fidelity over key isolation)
+              ...(process.env.GEMINI_API_KEY ? { GEMINI_API_KEY: process.env.GEMINI_API_KEY } : {}),
+              ...(process.env.XAI_API_KEY ? { XAI_API_KEY: process.env.XAI_API_KEY } : {}),
               PHANTOM_PROMPT: say,
               PHANTOM_BRAND: brandJson,
               PHANTOM_PLUGINS: AGENT_PLUGIN_NAMES,
@@ -170,6 +177,9 @@ export async function GET(req: NextRequest, ctx: { params: Promise<{ id: string 
         };
 
         await Promise.all(targets.map((v) => runVariant(v).catch(() => send({ t: "variant-done", v }))));
+
+        // pull any plugin-conjured imagery into the vault
+        await client.commands.run("node register-assets.mjs", { env: gwEnv }).catch(() => {});
 
         clearInterval(timer);
         await supabase

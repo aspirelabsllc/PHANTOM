@@ -57,6 +57,23 @@ console.log("conjuring…");
 const g = await conjure("gemini");
 const x = await conjure("grok");
 
+// reverse registration (what the VM's register-assets.mjs does)
+const PNG_1PX =
+  "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==";
+async function register(file) {
+  const res = await fetch(`${base}/api/img/register`, {
+    method: "POST",
+    headers: { "content-type": "application/json", authorization: `Bearer ${token}` },
+    body: JSON.stringify({ file, b64: PNG_1PX, note: "register smoke" }),
+  });
+  const body = await res.json().catch(() => ({}));
+  return { ok: res.ok, body };
+}
+const r1 = await register("smoke-registered.png");
+const r2 = await register("smoke-registered.png"); // idempotent re-run
+const regOk = r1.ok && r1.body.file === "smoke-registered.png" && r2.ok && r2.body.existed === true;
+console.log(`  register: ${regOk ? "ok (idempotent)" : `FAIL ${JSON.stringify([r1, r2])}`}`);
+
 const { data: after } = await admin.from("phantom_projects").select("offerings").eq("id", pid).single();
 const offs = after?.offerings ?? [];
 console.log(
@@ -71,5 +88,5 @@ const paths = offs.map((o) => o.path).filter(Boolean);
 if (paths.length) await admin.storage.from("phantom-offerings").remove(paths);
 await admin.from("phantom_projects").delete().eq("id", pid);
 console.log("cleaned up");
-if (!g || !x) process.exit(1);
+if (!g || !x || !regOk) process.exit(1);
 console.log("img gateway smoke: PASS");

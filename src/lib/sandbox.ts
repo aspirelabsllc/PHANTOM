@@ -237,7 +237,7 @@ export const AGENT_RUNNER = [
   "  'Your site lives in ' + dir + '/ — edit ONLY inside that directory: index.html, styles.css, script.js (add more pages or partials there if needed, linked relatively). NEVER touch other design directories, the root index.html, package.json, vite.config.js, or node_modules.',",
   "  'Style with Tailwind utility classes in class attributes; put custom CSS (@font-face, keyframes, bespoke effects) in styles.css BELOW the @import \"tailwindcss\" line.',",
   "  'Brand assets are served at /assets/<file> (they live in public/assets/). Read public/assets/manifest.json to see what exists — logos, product shots, fonts, conjured imagery. Prefer real assets over placeholders or external stock URLs; load brand fonts with @font-face pointing at /assets/<file>.',",
-  "  'To conjure NEW imagery (hero scenes, product shots, textures, backdrops): run `node image.mjs --provider gemini --prompt \"rich, specific prompt: subject, style, lighting, palette\" --name <slug> --aspect 16:9` (providers gemini | grok; aspects like 1:1, 16:9, 9:16, 4:3, 3:4, 21:9). It saves public/assets/<slug>.png and registers it in the vault — reference it as /assets/<slug>.png.',",
+  "  'To conjure NEW imagery (hero scenes, product shots, textures, backdrops) use the image-generation plugin scripts: `bash $HOME/.phantom-plugins/claude-image-generation/scripts/gemini.sh --mode generate --prompt \"rich, specific prompt: subject, style, lighting, palette\" --aspect-ratio 16:9 --output public/assets/<slug>.png` (or xai.sh for Grok; edit an existing image with --mode edit --input-image public/assets/<file>). Only gemini + xai are available (no OpenAI key). ALWAYS write outputs into public/assets/ under a fresh descriptive slug — never reuse an existing asset filename — and reference them as /assets/<slug>.png; they register into the vault automatically after the build.',",
   "  'For any design or UI work, FIRST invoke the ui-ux-pro-max skill and apply its guidance on styles, color palettes, type pairings, layout, and UX — always subordinate to the rules below.',",
   "  faithful",
   "    ? 'Honor the brand kit below exactly: use its colors (hex), type pairing, and voice; NEVER violate any hard compliance rule.'",
@@ -256,7 +256,7 @@ export const AGENT_RUNNER = [
   "  allowedTools: ['Read','Write','Edit','Bash','Glob','Grep'],",
   "  permissionMode: 'bypassPermissions',",
   "  maxTurns: 40,",
-  "  skills: ['ui-ux-pro-max:ui-ux-pro-max','ui-ux-pro-max:design','ui-ux-pro-max:design-system','ui-ux-pro-max:ui-styling','ui-ux-pro-max:brand','ui-ux-pro-max:banner-design','ui-ux-pro-max:slides'],",
+  "  skills: ['ui-ux-pro-max:ui-ux-pro-max','ui-ux-pro-max:design','ui-ux-pro-max:design-system','ui-ux-pro-max:ui-styling','ui-ux-pro-max:brand','ui-ux-pro-max:banner-design','ui-ux-pro-max:slides','claude-image-generation:image-generation'],",
   "};",
   "if (plugins.length) base.plugins = plugins;",
   "let sawStream = false;",
@@ -310,34 +310,38 @@ const SHOT_SCRIPT = [
   "console.log('shot saved:', out, '(' + device + ' ' + path + ')');",
 ].join("\n");
 
-// The image-conjuring tool the agent runs. It reaches Gemini/Grok only through
-// our gateway (/api/img) with the same session token — provider keys never
-// enter this VM. The gateway also registers the asset in the project's vault.
-const IMAGE_SCRIPT = [
-  "import { mkdirSync, writeFileSync, readFileSync } from 'node:fs';",
-  "const args = process.argv.slice(2);",
-  "const arg = (n, d) => { const i = args.indexOf('--' + n); return i > -1 && args[i + 1] ? args[i + 1] : d; };",
-  "const provider = arg('provider', 'gemini');",
-  "const prompt = arg('prompt', '');",
-  "const name = arg('name', 'conjured-' + process.pid).replace(/[^a-zA-Z0-9._-]/g, '-');",
-  "const aspect = arg('aspect', '1:1');",
-  "if (!prompt) { console.error('usage: node image.mjs --provider gemini|grok --prompt \"...\" --name <slug> [--aspect 16:9]'); process.exit(1); }",
+// Reverse sync: anything the agent dropped into public/assets/ that the vault
+// doesn't know yet (plugin-generated imagery) is uploaded to /api/img/register
+// with the session token, so it lands in Supabase, shows in the panel, and
+// survives the pruning side of sync-assets.mjs. Runs before sync and after
+// every build turn.
+const REGISTER_SCRIPT = [
+  "import { readFileSync, writeFileSync, readdirSync, statSync, existsSync } from 'node:fs';",
   "const origin = (process.env.ANTHROPIC_BASE_URL || '').replace(/\\/api\\/gw\\/?$/, '');",
   "const token = process.env.ANTHROPIC_API_KEY || '';",
-  "console.log('conjuring via ' + provider + '…');",
-  "const res = await fetch(origin + '/api/img', {",
-  "  method: 'POST',",
-  "  headers: { 'content-type': 'application/json', authorization: 'Bearer ' + token },",
-  "  body: JSON.stringify({ provider, prompt, name, aspect }),",
-  "});",
-  "if (!res.ok) { console.error('conjuring failed: HTTP ' + res.status + ' — ' + (await res.text()).slice(0, 400)); process.exit(1); }",
-  "const out = await res.json();",
-  "mkdirSync('public/assets', { recursive: true });",
-  "writeFileSync('public/assets/' + out.file, Buffer.from(out.b64, 'base64'));",
+  "if (!existsSync('public/assets')) { console.log('registered 0 new asset(s)'); process.exit(0); }",
   "let m = []; try { m = JSON.parse(readFileSync('public/assets/manifest.json', 'utf8')); } catch {}",
-  "if (!m.some((e) => e.file === out.file)) m.push({ file: out.file, type: 'image', origin: 'conjured', note: prompt.slice(0, 140) });",
+  "const known = new Set(m.map((e) => e.file));",
+  "known.add('manifest.json');",
+  "let n = 0;",
+  "for (const f of readdirSync('public/assets')) {",
+  "  if (known.has(f)) continue;",
+  "  const p = 'public/assets/' + f;",
+  "  if (!statSync(p).isFile()) continue;",
+  "  const b64 = readFileSync(p).toString('base64');",
+  "  try {",
+  "    const res = await fetch(origin + '/api/img/register', {",
+  "      method: 'POST',",
+  "      headers: { 'content-type': 'application/json', authorization: 'Bearer ' + token },",
+  "      body: JSON.stringify({ file: f, b64 }),",
+  "    });",
+  "    if (!res.ok) { console.error('register failed for ' + f + ': HTTP ' + res.status + ' — ' + (await res.text()).slice(0, 200)); continue; }",
+  "    m.push({ file: f, type: 'image', origin: 'conjured' });",
+  "    n++;",
+  "  } catch (e) { console.error('register failed for ' + f + ': ' + e.message); }",
+  "}",
   "writeFileSync('public/assets/manifest.json', JSON.stringify(m, null, 2));",
-  "console.log('conjured /assets/' + out.file);",
+  "console.log('registered ' + n + ' new asset(s)');",
 ].join("\n");
 
 // Reconciles public/assets/ against the vault snapshot in assets.json:
@@ -370,6 +374,10 @@ const SYNC_SCRIPT = [
 // Cloned once per sandbox, outside the site cwd so the agent never touches them.
 const AGENT_PLUGINS: { name: string; repo: string }[] = [
   { name: "ui-ux-pro-max", repo: "https://github.com/nextlevelbuilder/ui-ux-pro-max-skill" },
+  // Gemini/xAI image generation via shell scripts. NOTE: its scripts call the
+  // providers directly, so the build route passes GEMINI_API_KEY/XAI_API_KEY
+  // into the VM (a deliberate trade-off Salman chose over the /api/img proxy).
+  { name: "claude-image-generation", repo: "https://github.com/hex/claude-image-generation" },
 ];
 // passed to the runner as PHANTOM_PLUGINS so it can resolve the cloned dirs
 export const AGENT_PLUGIN_NAMES = AGENT_PLUGINS.map((p) => p.name).join(",");
@@ -379,7 +387,7 @@ export const AGENT_PLUGIN_NAMES = AGENT_PLUGINS.map((p) => p.name).join(",");
 export async function ensureBuilder(client: SbClient): Promise<void> {
   await client.fs.writeTextFile("agent-runner.mjs", AGENT_RUNNER);
   await client.fs.writeTextFile("shot.mjs", SHOT_SCRIPT);
-  await client.fs.writeTextFile("image.mjs", IMAGE_SCRIPT);
+  await client.fs.writeTextFile("register-assets.mjs", REGISTER_SCRIPT);
   await client.fs.writeTextFile("sync-assets.mjs", SYNC_SCRIPT);
   await client.commands.run(
     "node -e \"require.resolve('@anthropic-ai/claude-agent-sdk')\" 2>/dev/null || npm install @anthropic-ai/claude-agent-sdk@0.3.207",
@@ -392,8 +400,8 @@ export async function ensureBuilder(client: SbClient): Promise<void> {
       `test -d ${dir}/${p.name}/.git || git clone --depth 1 --single-branch -q ${p.repo} ${dir}/${p.name}`,
     );
   }
-  // drop any fullstack-dev-skills clone left on older VMs (no longer used)
-  steps.push(`rm -rf ${dir}/fullstack-dev-skills`);
+  // drop leftovers from older VM generations (no longer used)
+  steps.push(`rm -rf ${dir}/fullstack-dev-skills`, `rm -f image.mjs`);
   // browser harness: Playwright + chromium in an isolated dir (once per VM),
   // so `node shot.mjs` can screenshot the live preview for the agent to see
   const tools = "$HOME/.phantom-tools";
