@@ -71,7 +71,10 @@ export async function syncProjectAssets(
   try {
     const files = await buildAssetFiles(offerings, brand);
     const { client } = await connectSandbox(sandboxId);
-    await syncAssets(client, files);
+    // additive only — this runs on every boot/reload with no register pass
+    // before it, so pruning here would delete conjured imagery not yet in the
+    // vault. The build path prunes (after register) to drop truly-removed files.
+    await syncAssets(client, files, false);
   } catch {
     // sync is opportunistic; boot/build paths reconcile later
   }

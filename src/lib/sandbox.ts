@@ -244,8 +244,15 @@ export async function writeClaudeMd(
 }
 
 // Push the vault's assets into the VM: sync-assets.mjs downloads what's
-// missing, prunes what was removed, and rewrites public/assets/manifest.json.
-export async function syncAssets(client: SbClient, files: AssetFile[]): Promise<void> {
+// missing and rewrites public/assets/manifest.json. `prune` removes files no
+// longer in the vault — safe ONLY after a register pass has run (build path),
+// since it would otherwise delete conjured imagery not yet registered. The
+// opportunistic boot sync passes prune=false so a reload never eats fresh art.
+export async function syncAssets(
+  client: SbClient,
+  files: AssetFile[],
+  prune = true,
+): Promise<void> {
   const manifest = files.map((f) => ({
     file: f.file,
     type: f.type,
@@ -253,7 +260,7 @@ export async function syncAssets(client: SbClient, files: AssetFile[]): Promise<
     origin: f.origin ?? "offered",
     ...(f.note ? { note: f.note } : {}),
   }));
-  const spec = { files: files.map(({ file, url }) => ({ file, url })), manifest };
+  const spec = { files: files.map(({ file, url }) => ({ file, url })), manifest, prune };
   await client.fs.writeTextFile("assets.json", JSON.stringify(spec, null, 2));
   await client.commands.run("node sync-assets.mjs");
 }
@@ -320,8 +327,10 @@ const SYNC_SCRIPT = [
   "mkdirSync('public/assets', { recursive: true });",
   "const keep = new Set(spec.files.map((f) => f.file));",
   "keep.add('manifest.json');",
-  "for (const f of readdirSync('public/assets')) {",
-  "  if (!keep.has(f)) rmSync('public/assets/' + f, { force: true, recursive: true });",
+  "if (spec.prune !== false) {",
+  "  for (const f of readdirSync('public/assets')) {",
+  "    if (!keep.has(f)) rmSync('public/assets/' + f, { force: true, recursive: true });",
+  "  }",
   "}",
   "for (const f of spec.files) {",
   "  const p = 'public/assets/' + f.file;",
