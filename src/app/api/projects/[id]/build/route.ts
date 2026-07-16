@@ -3,16 +3,12 @@ import { createClient } from "@/lib/supabase/server";
 import { bootSandbox, connectSandbox, ensureBuilder, syncAssets, AGENT_PLUGIN_NAMES, type SbClient } from "@/lib/sandbox";
 import { buildAssetFiles } from "@/lib/assets";
 import { mintSessionToken } from "@/lib/gateway-token";
+import { acquireBuildLock, releaseBuildLock } from "@/lib/build-lock";
 import { VARIANTS, VARIANT_META, type Brand, type Offering, type Variant } from "@/lib/brand";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 export const maxDuration = 300;
-
-// One live build per project (single Railway instance, so in-memory holds).
-// TTL guards against a crashed turn wedging the project forever.
-const ACTIVE_BUILDS = new Map<string, number>();
-const LOCK_TTL = 30 * 60 * 1000;
 
 // The two art directions the faithful apparitions diverge along on the first
 // summon; the third apparition is unbound and invents its own.
@@ -96,8 +92,7 @@ export async function GET(req: NextRequest, ctx: { params: Promise<{ id: string 
 
         // one build per project — concurrent summons would fight over the
         // same design dirs and sessions
-        const lockedAt = ACTIVE_BUILDS.get(id);
-        if (lockedAt && Date.now() - lockedAt < LOCK_TTL) {
+        if (!acquireBuildLock(id)) {
           send({
             t: "error",
             message:
@@ -105,7 +100,6 @@ export async function GET(req: NextRequest, ctx: { params: Promise<{ id: string 
           });
           return finish();
         }
-        ACTIVE_BUILDS.set(id, Date.now());
         lockOwned = true;
 
         // record the invoker's words durably before any work begins
@@ -243,7 +237,7 @@ export async function GET(req: NextRequest, ctx: { params: Promise<{ id: string 
           .then(undefined, () => {});
       } finally {
         if (timer) clearInterval(timer);
-        if (lockOwned) ACTIVE_BUILDS.delete(id);
+        if (lockOwned) releaseBuildLock(id);
         finish();
       }
     },

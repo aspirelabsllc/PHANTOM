@@ -193,6 +193,11 @@ export async function connectSandbox(
 // agent wrote and restore the original files, then nudge Vite.
 export async function resetSandboxFiles(sandboxId: string): Promise<void> {
   const { client } = await connectSandbox(sandboxId);
+  // silence any apparitions still building — their dirs are about to vanish
+  // ([a]gent bracket trick: don't let pkill match this very command line)
+  await client.commands.run(
+    "(pkill -f '[a]gent-runner' || true); (pkill -f '[c]laude-agent-sdk-linux' || true)",
+  );
   await client.commands.run("rm -rf src designs public");
   for (const [path, content] of Object.entries(STARTER)) {
     await client.fs.writeTextFile(path, content);

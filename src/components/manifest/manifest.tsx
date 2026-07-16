@@ -313,8 +313,12 @@ export function Manifest({
               return withLane(p, v, { ...l, reply: l.reply || `The build faltered — ${m.message}` });
             });
           } else {
+            // a turn-level refusal or failure — say it, never swallow it
             setPending((p) => {
-              if (p) setTurns((t) => [...t, p]);
+              if (p) {
+                const said = m.message || "The build slipped away.";
+                setTurns((t) => [...t, withLane(p, "", { reply: said, logs: [] })]);
+              }
               return null;
             });
             setBuilding(false);
