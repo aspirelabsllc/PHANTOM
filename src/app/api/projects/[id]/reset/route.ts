@@ -1,6 +1,6 @@
 import { NextResponse, type NextRequest } from "next/server";
 import { createClient } from "@/lib/supabase/server";
-import { resetSandboxFiles } from "@/lib/sandbox";
+import { resetSandboxFiles, resetDaemonState } from "@/lib/sandbox";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -27,14 +27,14 @@ export async function POST(req: NextRequest, ctx: { params: Promise<{ id: string
 
   try {
     // reset the site first (the slow part) so a failure leaves the chat intact;
-    // resetSandboxFiles also kills any apparitions still building
-    if (scope === "full" && project.sandbox_id) {
-      await resetSandboxFiles(project.sandbox_id);
+    // both scopes kill the daemon + wipe its session memory — it respawns
+    // fresh on the next word
+    if (project.sandbox_id) {
+      if (scope === "full") await resetSandboxFiles(project.sandbox_id);
+      else await resetDaemonState(project.sandbox_id);
     }
-    // clear the conversation + agent sessions in both cases; a full reset
-    // also un-claims the chosen form and frees the chamber (the killed
-    // agents' turn will never report home)
     await supabase.from("phantom_messages").delete().eq("project_id", id);
+    await supabase.from("phantom_events").delete().eq("project_id", id);
     await supabase
       .from("phantom_projects")
       .update({

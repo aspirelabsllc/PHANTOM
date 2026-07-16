@@ -10,8 +10,10 @@ import {
   type Project,
   type Variant,
 } from "@/lib/brand";
-import type { StoredMessage } from "@/lib/projects";
+import type { StoredMessage, PhantomEvent } from "@/lib/projects";
 import { ReplyMd } from "@/components/reply-md";
+import { Transcript } from "@/components/manifest/transcript";
+import { useDaemon } from "@/components/manifest/use-daemon";
 
 type Row = { verb?: string; target?: string };
 // One apparition's share of a turn. Keyed by variant; "" = legacy single-lane rows.
@@ -103,9 +105,11 @@ function DeviceDot({ d }: { d: Device }) {
 export function Manifest({
   project,
   initialMessages = [],
+  initialEvents = [],
 }: {
   project: Project;
   initialMessages?: StoredMessage[];
+  initialEvents?: PhantomEvent[];
 }) {
   const [device, setDevice] = useState<Device>("desktop");
   const [tab, setTab] = useState<Tab>("vault");
@@ -217,20 +221,48 @@ export function Manifest({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  // build conversation
+  // the conversation — a persistent Phantom session in the VM. Live events
+  // stream straight from the daemon; history comes from the events table.
   const [draft, setDraft] = useState("");
-  const [building, setBuilding] = useState(false);
-  const [turns, setTurns] = useState<Turn[]>(() => messagesToTurns(initialMessages));
-  const [pending, setPending] = useState<Turn | null>(null);
   const [previewKey, setPreviewKey] = useState(0);
   const [resetting, setResetting] = useState(false);
+  const [sayErr, setSayErr] = useState<string | null>(null);
+  const legacyTurns = messagesToTurns(initialMessages);
+
+  const daemon = useDaemon(project.id, initialEvents, !!b);
+  const building = daemon.status === "working";
+  const [workingSince, setWorkingSince] = useState<number | null>(null);
+  const [elapsed, setElapsed] = useState(0);
+  useEffect(() => {
+    if (building && workingSince == null) setWorkingSince(Date.now());
+    if (!building) setWorkingSince(null);
+  }, [building, workingSince]);
+  useEffect(() => {
+    if (workingSince == null) return;
+    const t = setInterval(() => setElapsed(Math.floor((Date.now() - workingSince) / 1000)), 1000);
+    return () => clearInterval(t);
+  }, [workingSince]);
+
+  // refresh the chamber + vault as work lands (turn settles, task finishes,
+  // site rewinds) — Vite HMR live-reloads the iframe during the build too
+  const lastSeq = daemon.events.length ? daemon.events[daemon.events.length - 1].seq : 0;
+  useEffect(() => {
+    const last = daemon.events[daemon.events.length - 1];
+    if (!last) return;
+    if (last.type === "result" || last.type === "rewind" || last.type === "interrupted") {
+      setPreviewKey((k) => k + 1);
+      loadAssets();
+    }
+    if (last.type === "tool_result") loadAssets();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [lastSeq]);
 
   // keep the chat pinned to the latest message as it streams
   const scrollRef = useRef<HTMLDivElement>(null);
   useEffect(() => {
     const el = scrollRef.current;
     if (el) el.scrollTop = el.scrollHeight;
-  }, [turns, pending]);
+  }, [lastSeq, daemon.deltas, daemon.status]);
 
   // Reset a project. "conversation" clears the chat + agent memory; "full" also
   // wipes the site back to the starter scaffold and reloads the preview.
@@ -245,104 +277,34 @@ export function Manifest({
     try {
       const res = await fetch(`/api/projects/${project.id}/reset?scope=${scope}`, { method: "POST" });
       if (!res.ok) throw new Error("reset failed");
-      setTurns([]);
-      setPending(null);
-      if (scope === "full") {
-        // the summons re-opens: no form is claimed anymore
-        setChosen(null);
-        setVariant("one");
-        setPreviewKey((k) => k + 1);
-      }
+      window.location.reload(); // the transcript + daemon session start clean
     } catch {
-      // leave state as-is on failure
-    } finally {
       setResetting(false);
     }
   }
 
-  function startBuild(text: string) {
+  async function speak(text: string) {
     const say = text.trim();
-    if (!say || building || !preview) return;
+    if (!say || daemon.saying || !preview) return;
     setDraft("");
-    setBuilding(true);
-    setPending({ you: say, lanes: {} });
+    setSayErr(null);
+    try {
+      await daemon.say(say);
+    } catch (e) {
+      setSayErr(e instanceof Error ? e.message : "The word did not reach the chamber.");
+      setDraft(say); // give the words back
+    }
+  }
 
-    const lane = (p: Turn, v: string): Lane => p.lanes[v] ?? { reply: "", logs: [] };
-    const withLane = (p: Turn, v: string, l: Lane): Turn => ({ ...p, lanes: { ...p.lanes, [v]: l } });
-
-    const es = new EventSource(`/api/projects/${project.id}/build?say=${encodeURIComponent(say)}`);
-    es.onmessage = (e) => {
-      const m = JSON.parse(e.data);
-      const v: string = m.v ?? "";
-      switch (m.t) {
-        case "log":
-          setPending((p) => {
-            if (!p) return p;
-            const l = lane(p, v);
-            return withLane(p, v, { ...l, logs: [...l.logs, { verb: m.verb, target: m.target }] });
-          });
-          break;
-        case "say":
-          setPending((p) => {
-            if (!p) return p;
-            const l = lane(p, v);
-            return withLane(p, v, { ...l, reply: (l.reply ? l.reply + " " : "") + m.text });
-          });
-          break;
-        case "variant-done":
-          // this apparition finished — show its fresh form at once
-          setPreviewKey((k) => k + 1);
-          loadAssets();
-          break;
-        case "done":
-          setPending((p) => {
-            if (p) setTurns((t) => [...t, p]);
-            return null;
-          });
-          setBuilding(false);
-          setPreviewKey((k) => k + 1);
-          loadAssets();
-          es.close();
-          break;
-        case "error":
-          if (v) {
-            // one apparition faltered; the others build on
-            setPending((p) => {
-              if (!p) return p;
-              const l = lane(p, v);
-              return withLane(p, v, { ...l, reply: l.reply || `The build faltered — ${m.message}` });
-            });
-          } else {
-            // a turn-level refusal or failure — say it, never swallow it
-            setPending((p) => {
-              if (p) {
-                const said = m.message || "The build slipped away.";
-                setTurns((t) => [...t, withLane(p, "", { reply: said, logs: [] })]);
-              }
-              return null;
-            });
-            setBuilding(false);
-            es.close();
-          }
-          break;
-      }
-    };
-    es.onerror = () => {
-      es.close();
-      setBuilding(false);
-      setPending((p) => {
-        if (p) {
-          // the stream was severed (edge timeout / network), not the build —
-          // the apparitions finish server-side and persist their words
-          const note =
-            "The chamber lost the stream, but the apparitions build on. Their forms and words will be here when they settle — return and reload in a few minutes.";
-          const hasWords = Object.values(p.lanes).some((l) => l.reply);
-          const lanes = hasWords ? p.lanes : { ...p.lanes, "": { reply: note, logs: [] } };
-          setTurns((t) => [...t, { ...p, lanes }]);
-        }
-        return null;
-      });
-    };
+  async function doRewind(sha: string) {
+    if (building) return;
+    if (!window.confirm(`Rewind the site files to checkpoint ${sha}? Later changes are discarded.`))
+      return;
+    const ok = await daemon.rewind(sha);
+    if (ok) {
+      setPreviewKey((k) => k + 1);
+      loadAssets();
+    }
   }
 
   return (
@@ -413,8 +375,28 @@ export function Manifest({
         <div className="chat-head">
           <span className="mono">
             PHANTOM&nbsp;·&nbsp;
-            <span className="lit">{building ? "BUILDING" : b ? "ATTUNED" : "DORMANT"}</span>
+            <span className="lit">
+              {building
+                ? "AT WORK"
+                : daemon.status === "offline"
+                  ? "VEILED"
+                  : daemon.status === "connecting"
+                    ? "ATTUNING"
+                    : b
+                      ? "ATTUNED"
+                      : "DORMANT"}
+            </span>
           </span>
+          {building && (
+            <button
+              className="chat-stop"
+              onClick={() => daemon.stop()}
+              title="Stay the Phantom's hand (Esc) — the session survives; speak to redirect it"
+            >
+              <span className="stop-square" aria-hidden="true" />
+              STAY&nbsp;({elapsed >= 60 ? `${Math.floor(elapsed / 60)}M${elapsed % 60}S` : `${elapsed}S`})
+            </button>
+          )}
           <button
             className="chat-reset"
             onClick={() => doReset("conversation")}
@@ -446,8 +428,8 @@ export function Manifest({
             </p>
           </div>
 
-          {turns.map((t, i) => (
-            <Fragment key={i}>
+          {legacyTurns.map((t, i) => (
+            <Fragment key={`legacy-${i}`}>
               <div className="msg user">
                 <span className="who">You</span>
                 <div className="bubble">
@@ -486,56 +468,25 @@ export function Manifest({
             </Fragment>
           ))}
 
-          {!pending && project.building?.started_at && (
-            <div className="sys-row">
-              APPARITIONS ARE AT WORK FROM A PAST WORD — RELOAD WHEN THEY SETTLE
+          <Transcript events={daemon.events} deltas={daemon.deltas} onRewind={doRewind} />
+
+          {building && (
+            <div className="work-row" role="status">
+              <span className="work-pulse" aria-hidden="true" />
+              {daemon.tool?.name ? (
+                <>
+                  <span className="work-verb">{daemon.tool.name}</span>
+                  <span className="work-target">{daemon.tool.target}</span>
+                </>
+              ) : (
+                <span className="work-verb">the phantom stirs…</span>
+              )}
             </div>
           )}
-
-          {pending && (
-            <>
-              <div className="msg user">
-                <span className="who">You</span>
-                <div className="bubble">
-                  <p>{pending.you}</p>
-                </div>
-              </div>
-              {LANE_ORDER.filter((v) => pending.lanes[v]).map((v) => {
-                const l = pending.lanes[v];
-                return (
-                  <Fragment key={v}>
-                    {v && (
-                      <div className="lane-cap">
-                        APPARITION&nbsp;{VARIANT_META[v as Variant].numeral}&nbsp;·&nbsp;
-                        {VARIANT_META[v as Variant].label}
-                      </div>
-                    )}
-                    {!!l.logs.length && (
-                      <div className="lab-log" role="log">
-                        {l.logs.map((r, j) => (
-                          <div className={`log-row${j === l.logs.length - 1 && !l.reply ? " running" : ""}`} key={j}>
-                            <span className={`verb ${(r.verb ?? "").toLowerCase()}`}>{r.verb}</span>
-                            <span className="target">{r.target}</span>
-                          </div>
-                        ))}
-                      </div>
-                    )}
-                    {l.reply && (
-                      <div className="msg phantom">
-                        <span className="who">Phantom</span>
-                        <ReplyMd>{l.reply}</ReplyMd>
-                      </div>
-                    )}
-                  </Fragment>
-                );
-              })}
-              {!Object.keys(pending.lanes).length && (
-                <div className="sys-row">
-                  {chosen ? "THE PHANTOM IS AT WORK…" : "THREE APPARITIONS ARE AT WORK…"}
-                </div>
-              )}
-            </>
+          {daemon.status === "offline" && (
+            <div className="sys-row">THE CHAMBER IS VEILED — RECONNECTING…</div>
           )}
+          {sayErr && <div className="sys-row err">{sayErr}</div>}
         </div>
         <div className="m-composer">
           <div className="field">
@@ -544,21 +495,27 @@ export function Manifest({
               rows={1}
               aria-label="Speak to the Phantom"
               placeholder={
-                preview
-                  ? chosen
-                    ? "Speak to the claimed form…  (⇧↵ newline)"
-                    : "Speak — all three apparitions will heed…  (⇧↵ newline)"
-                  : "Waiting for the chamber to open…"
+                !preview
+                  ? "Waiting for the chamber to open…"
+                  : building
+                    ? "Speak — the Phantom hears you even as it works…  (⇧↵ newline)"
+                    : chosen
+                      ? "Speak to the claimed form…  (⇧↵ newline)"
+                      : "Speak — all three apparitions will heed…  (⇧↵ newline)"
               }
               value={draft}
               onChange={(e) => setDraft(e.target.value)}
               onKeyDown={(e) => {
                 if (e.key === "Enter" && !e.shiftKey) {
                   e.preventDefault();
-                  startBuild(draft);
+                  speak(draft);
+                }
+                if (e.key === "Escape" && building) {
+                  e.preventDefault();
+                  daemon.stop();
                 }
               }}
-              disabled={!preview || building}
+              disabled={!preview || daemon.saying}
             />
           </div>
         </div>

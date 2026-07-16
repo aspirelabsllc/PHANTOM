@@ -5,13 +5,15 @@ import { createHmac, timingSafeEqual } from "node:crypto";
 // round-trip. The real Anthropic key never leaves our backend.
 
 const TTL_MS = 2 * 60 * 60 * 1000; // 2h build session
+const DAEMON_TTL_MS = 24 * 60 * 60 * 1000; // 24h daemon lease; refreshed on every /say
 
 function sign(payload: string): string {
   return createHmac("sha256", process.env.GATEWAY_SECRET!).update(payload).digest("base64url");
 }
 
-export function mintSessionToken(projectId: string): string {
-  const payload = `${projectId}.${Date.now() + TTL_MS}`;
+export function mintSessionToken(projectId: string, kind: "build" | "daemon" = "build"): string {
+  const ttl = kind === "daemon" ? DAEMON_TTL_MS : TTL_MS;
+  const payload = `${projectId}.${Date.now() + ttl}`;
   return `pht_${payload}.${sign(payload)}`;
 }
 

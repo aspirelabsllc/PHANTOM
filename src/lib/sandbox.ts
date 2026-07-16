@@ -1,5 +1,7 @@
 import { CodeSandbox } from "@codesandbox/sdk";
-import { VARIANTS, VARIANT_META, type AssetFile } from "@/lib/brand";
+import { VARIANTS, VARIANT_META, type AssetFile, type Brand, type Variant } from "@/lib/brand";
+import { DAEMON_SOURCE, DAEMON_VERSION } from "@/lib/vm/daemon-source";
+import { buildClaudeMd } from "@/lib/claude-md";
 
 // The sandbox runtime for the Manifest — a CodeSandbox VM per project that
 // holds a real Vite + Tailwind static site (plain HTML/CSS/JS, no framework)
@@ -189,20 +191,56 @@ export async function connectSandbox(
   return { client, previewUrl };
 }
 
+// Silence the daemon + any agent still building ([p]hantom bracket trick:
+// don't let pkill match this very command line).
+export async function killDaemon(client: SbClient): Promise<void> {
+  await client.commands.run(
+    "(pkill -f '[p]hantom-daemon' || true); (pkill -f '[a]gent-runner' || true); (pkill -f '[c]laude-agent-sdk-linux' || true)",
+  );
+}
+
+// Clear the daemon's conversation state (session + seq) so the next boot
+// starts a fresh Phantom memory. The site files are untouched.
+export async function resetDaemonState(sandboxId: string): Promise<void> {
+  const { client } = await connectSandbox(sandboxId);
+  await killDaemon(client);
+  await client.commands.run("rm -f .phantom-daemon.json");
+}
+
 // Reset a project's site back to the starter scaffold: wipe everything the
 // agent wrote and restore the original files, then nudge Vite.
 export async function resetSandboxFiles(sandboxId: string): Promise<void> {
   const { client } = await connectSandbox(sandboxId);
-  // silence any apparitions still building — their dirs are about to vanish
-  // ([a]gent bracket trick: don't let pkill match this very command line)
-  await client.commands.run(
-    "(pkill -f '[a]gent-runner' || true); (pkill -f '[c]laude-agent-sdk-linux' || true)",
-  );
-  await client.commands.run("rm -rf src designs public");
+  await killDaemon(client);
+  await client.commands.run("rm -rf src designs public .git .phantom-daemon.json");
   for (const [path, content] of Object.entries(STARTER)) {
     await client.fs.writeTextFile(path, content);
   }
+  await ensureGit(client);
   await client.commands.runBackground("pgrep -f 'vite' >/dev/null 2>&1 || npm run dev");
+}
+
+// Idempotent git checkpointing baseline for the rewind feature.
+async function ensureGit(client: SbClient): Promise<void> {
+  await client.commands.run(
+    [
+      "test -d .git || git init -q -b main",
+      "git config user.email phantom@aspirelabs.dev",
+      "git config user.name 'The Phantom'",
+      "grep -q node_modules .gitignore 2>/dev/null || printf 'node_modules\\n.phantom-daemon.json\\nassets.json\\n' >> .gitignore",
+      "git add -A",
+      "(git diff --cached --quiet && git rev-parse HEAD >/dev/null 2>&1) || git commit -q -m 'checkpoint: scaffold' || true",
+    ].join(" ; ") + " ; true",
+  );
+}
+
+// Write/refresh the project CLAUDE.md inside the VM (brand kit + conventions).
+export async function writeClaudeMd(
+  client: SbClient,
+  brand: Brand | null,
+  chosen: Variant | null,
+): Promise<void> {
+  await client.fs.writeTextFile("CLAUDE.md", buildClaudeMd(brand, chosen));
 }
 
 // Push the vault's assets into the VM: sync-assets.mjs downloads what's
@@ -219,98 +257,6 @@ export async function syncAssets(client: SbClient, files: AssetFile[]): Promise<
   await client.fs.writeTextFile("assets.json", JSON.stringify(spec, null, 2));
   await client.commands.run("node sync-assets.mjs");
 }
-
-// The agent runner that runs INSIDE the sandbox. It reaches Anthropic only
-// through our gateway (ANTHROPIC_BASE_URL) with a session token as its key.
-export const AGENT_RUNNER = [
-  "import { query } from '@anthropic-ai/claude-agent-sdk';",
-  "import { existsSync } from 'node:fs';",
-  "import { execSync } from 'node:child_process';",
-  "const prompt = process.env.PHANTOM_PROMPT || '';",
-  "const brand = process.env.PHANTOM_BRAND || '{}';",
-  "const resume = process.env.PHANTOM_SESSION || '';",
-  "const variant = process.env.PHANTOM_VARIANT || 'one';",
-  "const faithful = process.env.PHANTOM_MODE !== 'unbound';",
-  "const direction = process.env.PHANTOM_DIRECTION || '';",
-  "const dir = 'designs/' + variant;",
-  "const pluginBase = (process.env.HOME || '/root') + '/.phantom-plugins';",
-  "const plugins = (process.env.PHANTOM_PLUGINS || '').split(',').filter(Boolean)",
-  "  .map((n) => pluginBase + '/' + n).filter((p) => existsSync(p))",
-  "  .map((path) => ({ type: 'local', path }));",
-  "const emit = (o) => console.log(JSON.stringify(o));",
-  "const system = [",
-  "  'You are the Phantom — you build one real static site inside this Vite + Tailwind v4 project: plain HTML, modern CSS, and light vanilla JS. No React, no frameworks, no build steps.',",
-  "  'Your site lives in ' + dir + '/ — edit ONLY inside that directory: index.html, styles.css, script.js (add more pages or partials there if needed, linked relatively). NEVER touch other design directories, the root index.html, package.json, vite.config.js, or node_modules.',",
-  "  'The invoker speaks to the whole summons at once — their words may describe several designs. Regardless: YOU produce exactly ONE design, yours, in ' + dir + '/. Never build multiple designs or write into any other directory.',",
-  "  'Style with Tailwind utility classes in class attributes; put custom CSS (@font-face, keyframes, bespoke effects) in styles.css BELOW the @import \"tailwindcss\" line.',",
-  "  'Brand assets are served at /assets/<file> (they live in public/assets/). Read public/assets/manifest.json to see what exists — logos, product shots, fonts, conjured imagery. Prefer real assets over placeholders or external stock URLs; load brand fonts with @font-face pointing at /assets/<file>.',",
-  "  'Build the page FIRST, completely, using existing vault assets and tasteful non-image treatments (color fields, gradients, type) as stand-ins. Only THEN conjure new imagery — at most 4 images for your design — and swap it in. To conjure use the image-generation plugin scripts: `bash $HOME/.phantom-plugins/claude-image-generation/scripts/gemini.sh --mode generate --prompt \"rich, specific prompt: subject, style, lighting, palette\" --aspect-ratio 16:9 --output public/assets/<slug>.png` (or xai.sh for Grok; edit an existing image with --mode edit --input-image public/assets/<file>). Only gemini + xai are available (no OpenAI key). ALWAYS write outputs into public/assets/ under a fresh descriptive slug — never reuse an existing asset filename — and reference them as /assets/<slug>.png; they register into the vault automatically.',",
-  "  'For any design or UI work, FIRST invoke the ui-ux-pro-max skill and apply its guidance on styles, color palettes, type pairings, layout, and UX — always subordinate to the rules below.',",
-  "  faithful",
-  "    ? 'Honor the brand kit below exactly: use its colors (hex), type pairing, and voice; NEVER violate any hard compliance rule.'",
-  "    : 'You are the UNBOUND apparition. From the kit below take ONLY the brand name, the real content and offerings, and the HARD compliance rules — those rules are law. Everything else (palette, typography, voice, layout, art direction) you invent fresh: be original and daring, and deliberately depart from the kit look.',",
-  "  direction ? 'ART DIRECTION for this apparition: ' + direction : '',",
-  "  'Keep the site valid: every page a complete HTML document linking its own styles.css. SEE your work before finishing: run `node shot.mjs /tmp/shot.png desktop /' + dir + '/` (also pass tablet or phone to check responsive), then Read /tmp/shot.png to view the actual rendered page. Critique it honestly — layout, spacing, hierarchy, color, contrast, overflow, broken or empty elements — and fix what looks off. Repeat the screenshot until it genuinely looks good.',",
-  "  'Work decisively — read only what you need, then write the files. Stop when the change is done and it looks right.',",
-  "  '',",
-  "  'BRAND KIT (JSON):',",
-  "  brand,",
-  "].filter(Boolean).join(String.fromCharCode(10));",
-  "const base = {",
-  "  model: 'claude-opus-4-8',",
-  "  systemPrompt: system,",
-  "  cwd: process.cwd(),",
-  "  allowedTools: ['Read','Write','Edit','Bash','Glob','Grep'],",
-  "  permissionMode: 'bypassPermissions',",
-  "  maxTurns: 40,",
-  "  skills: ['ui-ux-pro-max:ui-ux-pro-max','ui-ux-pro-max:design','ui-ux-pro-max:design-system','ui-ux-pro-max:ui-styling','ui-ux-pro-max:brand','ui-ux-pro-max:banner-design','ui-ux-pro-max:slides','claude-image-generation:image-generation'],",
-  "};",
-  "if (plugins.length) base.plugins = plugins;",
-  "let sawStream = false;",
-  "let currentSession = resume || '';",
-  "const accLogs = [];",
-  "let accReply = '';",
-  "let fatal = null;",
-  "async function run(options) {",
-  "  for await (const m of query({ prompt, options })) {",
-  "    sawStream = true;",
-  "    if (m.session_id) currentSession = m.session_id;",
-  "    if (m.type === 'system' && m.subtype === 'init' && m.session_id) { emit({ t: 'session', id: m.session_id }); }",
-  "    if (m.type === 'assistant' && m.message) {",
-  "      for (const b of m.message.content) {",
-  "        if (b.type === 'text' && b.text) { accReply += (accReply ? ' ' : '') + b.text; emit({ t: 'text', text: b.text }); }",
-  "        else if (b.type === 'tool_use') { const i = b.input || {}; const row = { verb: b.name, target: String(i.file_path || i.path || i.pattern || i.command || '').slice(0, 160) }; accLogs.push(row); emit({ t: 'tool', verb: row.verb, target: row.target }); }",
-  "      }",
-  "    } else if (m.type === 'result') { if (m.session_id) emit({ t: 'session', id: m.session_id }); emit({ t: 'result', subtype: m.subtype }); }",
-  "  }",
-  "}",
-  "const transient = (e) => /connection closed|overloaded|rate limit|too many requests|429|500|502|503|504|529|ECONNRESET|ETIMEDOUT|socket hang up|terminated|fetch failed|stalled|timed? out|timeout/i.test(String((e && e.message) || e));",
-  "let attempt = 0;",
-  "while (true) {",
-  "  try {",
-  "    if (attempt === 0) { await run(resume ? { ...base, resume } : base); }",
-  "    else { await run(currentSession ? { ...base, resume: currentSession } : base); }",
-  "    break;",
-  "  } catch (e) {",
-  "    if (attempt === 0 && resume && !sawStream) { try { await run(base); break; } catch (e2) { e = e2; } }",
-  "    if (transient(e) && attempt < 4) { attempt++; emit({ t: 'text', text: '(Connection dropped — resuming the build…)' }); await new Promise((r) => setTimeout(r, 1500 * attempt)); continue; }",
-  "    fatal = String((e && e.message) || e); emit({ t: 'error', message: fatal }); break;",
-  "  }",
-  "}",
-  "// Report home from INSIDE the VM — the HTTP route that spawned us may be",
-  "// long dead (Railway cuts streams at 15 min); this is the durable path.",
-  "const origin = (process.env.ANTHROPIC_BASE_URL || '').replace(/\\/api\\/gw\\/?$/, '');",
-  "try {",
-  "  const res = await fetch(origin + '/api/turn', {",
-  "    method: 'POST',",
-  "    headers: { 'content-type': 'application/json', authorization: 'Bearer ' + (process.env.ANTHROPIC_API_KEY || '') },",
-  "    body: JSON.stringify({ variant, session: currentSession, reply: accReply, logs: accLogs.slice(-300), error: fatal }),",
-  "  });",
-  "  if (!res.ok) emit({ t: 'text', text: '(Turn report refused: HTTP ' + res.status + ')' });",
-  "} catch (e) { emit({ t: 'text', text: '(Could not report the turn home: ' + e.message + ')' }); }",
-  "try { execSync('node register-assets.mjs', { stdio: 'ignore', timeout: 180000 }); } catch {}",
-  "emit({ t: 'end' });",
-].join("\n");
 
 // The screenshot harness the agent runs to actually see the rendered site.
 // Playwright lives in an isolated dir ($HOME/.phantom-tools) so the built
@@ -335,8 +281,7 @@ const SHOT_SCRIPT = [
 // Reverse sync: anything the agent dropped into public/assets/ that the vault
 // doesn't know yet (plugin-generated imagery) is uploaded to /api/img/register
 // with the session token, so it lands in Supabase, shows in the panel, and
-// survives the pruning side of sync-assets.mjs. Runs before sync and after
-// every build turn.
+// survives the pruning side of sync-assets.mjs.
 const REGISTER_SCRIPT = [
   "import { readFileSync, writeFileSync, readdirSync, statSync, existsSync } from 'node:fs';",
   "const origin = (process.env.ANTHROPIC_BASE_URL || '').replace(/\\/api\\/gw\\/?$/, '');",
@@ -397,23 +342,24 @@ const SYNC_SCRIPT = [
 const AGENT_PLUGINS: { name: string; repo: string }[] = [
   { name: "ui-ux-pro-max", repo: "https://github.com/nextlevelbuilder/ui-ux-pro-max-skill" },
   // Gemini/xAI image generation via shell scripts. NOTE: its scripts call the
-  // providers directly, so the build route passes GEMINI_API_KEY/XAI_API_KEY
+  // providers directly, so the daemon env carries GEMINI_API_KEY/XAI_API_KEY
   // into the VM (a deliberate trade-off Salman chose over the /api/img proxy).
   { name: "claude-image-generation", repo: "https://github.com/hex/claude-image-generation" },
 ];
-// passed to the runner as PHANTOM_PLUGINS so it can resolve the cloned dirs
+// passed to the daemon as PHANTOM_PLUGINS so it can resolve the cloned dirs
 export const AGENT_PLUGIN_NAMES = AGENT_PLUGINS.map((p) => p.name).join(",");
 
-// Write the runner + tool scripts, ensure the Agent SDK is installed, and
-// clone the skill plugins into the VM.
+// Write the daemon + tool scripts, ensure the Agent SDK is installed, clone
+// the skill plugins, and prepare the browser harness (playwright + MCP).
 export async function ensureBuilder(client: SbClient): Promise<void> {
-  await client.fs.writeTextFile("agent-runner.mjs", AGENT_RUNNER);
+  await client.fs.writeTextFile("phantom-daemon.mjs", DAEMON_SOURCE);
   await client.fs.writeTextFile("shot.mjs", SHOT_SCRIPT);
   await client.fs.writeTextFile("register-assets.mjs", REGISTER_SCRIPT);
   await client.fs.writeTextFile("sync-assets.mjs", SYNC_SCRIPT);
   await client.commands.run(
     "node -e \"require.resolve('@anthropic-ai/claude-agent-sdk')\" 2>/dev/null || npm install @anthropic-ai/claude-agent-sdk@0.3.207",
   );
+  await ensureGit(client);
   // clone skill plugins (idempotent + shallow); never fail the build on this
   const dir = "$HOME/.phantom-plugins";
   const steps = [`mkdir -p ${dir}`];
@@ -423,16 +369,66 @@ export async function ensureBuilder(client: SbClient): Promise<void> {
     );
   }
   // drop leftovers from older VM generations (no longer used)
-  steps.push(`rm -rf ${dir}/fullstack-dev-skills`, `rm -f image.mjs`);
-  // browser harness: Playwright + chromium in an isolated dir (once per VM),
-  // so `node shot.mjs` can screenshot the live preview for the agent to see
+  steps.push(`rm -rf ${dir}/fullstack-dev-skills`, `rm -f image.mjs agent-runner.mjs`);
+  // browser harness: playwright + chromium + the playwright MCP server in an
+  // isolated dir (once per VM) — shot.mjs screenshots + MCP browser tools
   const tools = "$HOME/.phantom-tools";
   steps.push(`mkdir -p ${tools}`);
   steps.push(
     `test -d ${tools}/node_modules/playwright || (cd ${tools} && npm init -y >/dev/null 2>&1 && npm i playwright >/dev/null 2>&1)`,
   );
   steps.push(
+    `test -d ${tools}/node_modules/@playwright/mcp || (cd ${tools} && npm i @playwright/mcp >/dev/null 2>&1)`,
+  );
+  steps.push(
     `test -d $HOME/.cache/ms-playwright || (cd ${tools} && npx --yes playwright install --with-deps chromium >/dev/null 2>&1)`,
   );
   await client.commands.run(steps.join(" ; ") + " ; true");
 }
+
+export type DaemonEnv = {
+  token: string; // gateway session token (daemon kind)
+  secret: string; // shared control-auth secret
+  projectId: string;
+};
+
+// Make sure the daemon process is running and current. Respawns on version
+// mismatch (deploys) and after VM wake-ups that killed it.
+export async function ensureDaemon(client: SbClient, env: DaemonEnv): Promise<void> {
+  const health = await client.commands.run(
+    "curl -sf -m 2 http://localhost:8787/health || echo down",
+  );
+  if (health.includes(`"v":"${DAEMON_VERSION}"`)) return;
+  await killDaemon(client);
+  const gateway = `${process.env.APP_URL}/api/gw`;
+  await client.commands.runBackground("node phantom-daemon.mjs", {
+    env: {
+      IS_SANDBOX: "1",
+      ANTHROPIC_BASE_URL: gateway,
+      ANTHROPIC_API_KEY: env.token,
+      PHANTOM_ORIGIN: process.env.APP_URL ?? "",
+      PHANTOM_DAEMON_SECRET: env.secret,
+      PHANTOM_PROJECT: env.projectId,
+      PHANTOM_PLUGINS: AGENT_PLUGIN_NAMES,
+      ...(process.env.GEMINI_API_KEY ? { GEMINI_API_KEY: process.env.GEMINI_API_KEY } : {}),
+      ...(process.env.XAI_API_KEY ? { XAI_API_KEY: process.env.XAI_API_KEY } : {}),
+    },
+  });
+  // wait for the control server to come up (fresh spawn only)
+  for (let i = 0; i < 20; i++) {
+    const h = await client.commands.run("curl -sf -m 2 http://localhost:8787/health || echo down");
+    if (h.includes('"ok":true')) return;
+    await new Promise((r) => setTimeout(r, 1000));
+  }
+  throw new Error("The daemon would not wake.");
+}
+
+// A signed browser-reachable URL for the daemon's control port.
+export async function daemonHostUrl(sandboxId: string): Promise<string> {
+  const s = sdk();
+  const token = await s.hosts.createToken(sandboxId, {
+    expiresAt: new Date(Date.now() + 24 * 60 * 60 * 1000),
+  });
+  return s.hosts.getUrl({ sandboxId, token: token.token }, 8787);
+}
+

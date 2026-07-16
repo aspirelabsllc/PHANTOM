@@ -1,6 +1,6 @@
 import { redirect, notFound } from "next/navigation";
 import { createClient } from "@/lib/supabase/server";
-import { getProject, getMessages } from "@/lib/projects";
+import { getProject, getMessages, getEvents } from "@/lib/projects";
 import { Manifest } from "@/components/manifest/manifest";
 
 export default async function ManifestProjectPage({
@@ -18,11 +18,12 @@ export default async function ManifestProjectPage({
   const project = await getProject(id); // RLS → null if not owner
   if (!project) notFound();
 
-  const messages = await getMessages(id); // durable build-chat transcript
+  const messages = await getMessages(id); // legacy transcript (pre-daemon turns)
+  const events = await getEvents(id); // durable daemon event stream
 
   return (
     <div style={{ height: "100vh", overflow: "hidden" }}>
-      <Manifest project={project} initialMessages={messages} />
+      <Manifest project={project} initialMessages={messages} initialEvents={events} />
     </div>
   );
 }

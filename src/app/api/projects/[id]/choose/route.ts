@@ -1,6 +1,7 @@
 import { NextResponse, type NextRequest } from "next/server";
 import { createClient } from "@/lib/supabase/server";
-import { VARIANTS, type Variant } from "@/lib/brand";
+import { connectSandbox, writeClaudeMd } from "@/lib/sandbox";
+import { VARIANTS, type Brand, type Variant } from "@/lib/brand";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -23,7 +24,7 @@ export async function POST(req: NextRequest, ctx: { params: Promise<{ id: string
 
   const { data: project } = await supabase
     .from("phantom_projects")
-    .select("id")
+    .select("id, sandbox_id, brand")
     .eq("id", id)
     .maybeSingle();
   if (!project) return NextResponse.json({ error: "not found" }, { status: 404 });
@@ -33,6 +34,14 @@ export async function POST(req: NextRequest, ctx: { params: Promise<{ id: string
     .update({ chosen_variant: variant ?? null, updated_at: new Date().toISOString() })
     .eq("id", id);
   if (error) return NextResponse.json({ error: error.message }, { status: 500 });
+
+  // refresh the VM's CLAUDE.md so the claim is written law (best-effort — the
+  // per-message context note carries it to the live session either way)
+  if (project.sandbox_id) {
+    connectSandbox(project.sandbox_id)
+      .then(({ client }) => writeClaudeMd(client, project.brand as Brand | null, variant ?? null))
+      .catch(() => {});
+  }
 
   return NextResponse.json({ ok: true, chosen_variant: variant ?? null });
 }

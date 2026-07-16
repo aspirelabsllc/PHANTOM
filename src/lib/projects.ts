@@ -49,3 +49,23 @@ export async function getMessages(projectId: string): Promise<StoredMessage[]> {
   if (error) throw error;
   return (data ?? []) as StoredMessage[];
 }
+
+// One daemon event as the transcript consumes it (persisted or live SSE).
+export type PhantomEvent = {
+  seq: number;
+  turn_id: string | null;
+  type: string;
+  payload: Record<string, unknown>;
+};
+
+export async function getEvents(projectId: string): Promise<PhantomEvent[]> {
+  const supabase = await createClient();
+  const { data, error } = await supabase
+    .from("phantom_events")
+    .select("seq, turn_id, type, payload")
+    .eq("project_id", projectId)
+    .order("seq", { ascending: true })
+    .limit(5000);
+  if (error) throw error;
+  return (data ?? []) as PhantomEvent[];
+}

@@ -120,6 +120,39 @@ create policy "msg_own_insert" on public.phantom_messages for insert with check 
 create policy "msg_own_delete" on public.phantom_messages for delete using (
   exists (select 1 from public.phantom_projects p
           where p.id = project_id and p.owner = auth.uid()));
+
+-- shared secret between the app and this project's in-VM daemon (control auth)
+alter table public.phantom_projects add column if not exists daemon_secret text;
+
+-- the full agent event stream (M8): one row per SDK event, written by the
+-- in-VM daemon through POST /api/events (service role). seq is assigned by
+-- the daemon and monotonic per project; the UI orders and de-dupes on it.
+create table if not exists public.phantom_events (
+  id           bigserial primary key,
+  project_id   uuid not null references public.phantom_projects(id) on delete cascade,
+  seq          bigint not null,
+  turn_id      text,
+  type         text not null,
+  payload      jsonb not null default '{}'::jsonb,
+  created_at   timestamptz not null default now(),
+  unique (project_id, seq)
+);
+
+create index if not exists phantom_events_project_idx
+  on public.phantom_events (project_id, seq);
+
+alter table public.phantom_events enable row level security;
+
+drop policy if exists "evt_own_select" on public.phantom_events;
+drop policy if exists "evt_own_delete" on public.phantom_events;
+
+-- reads flow through project ownership; inserts happen only via service role
+create policy "evt_own_select" on public.phantom_events for select using (
+  exists (select 1 from public.phantom_projects p
+          where p.id = project_id and p.owner = auth.uid()));
+create policy "evt_own_delete" on public.phantom_events for delete using (
+  exists (select 1 from public.phantom_projects p
+          where p.id = project_id and p.owner = auth.uid()));
 `;
 
 const pg = new Client({ connectionString: env.SUPABASE_DATABASE_URL });
