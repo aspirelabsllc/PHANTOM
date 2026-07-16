@@ -2,6 +2,7 @@ import { CodeSandbox } from "@codesandbox/sdk";
 import { VARIANTS, VARIANT_META, type AssetFile, type Brand, type Variant } from "@/lib/brand";
 import { DAEMON_SOURCE, DAEMON_VERSION } from "@/lib/vm/daemon-source";
 import { buildClaudeMd } from "@/lib/claude-md";
+import { enabledPlugins, pluginNames, type Plugin } from "@/lib/plugins";
 
 // The sandbox runtime for the Manifest — a CodeSandbox VM per project that
 // holds a real Vite + Tailwind static site (plain HTML/CSS/JS, no framework)
@@ -345,22 +346,9 @@ const SYNC_SCRIPT = [
   "console.log('assets in sync: ' + spec.files.length);",
 ].join("\n");
 
-// Skill plugins cloned into the VM and handed to the agent via the SDK's
-// `plugins` option. Each repo is a self-contained plugin (has .claude-plugin/).
-// Cloned once per sandbox, outside the site cwd so the agent never touches them.
-const AGENT_PLUGINS: { name: string; repo: string }[] = [
-  { name: "ui-ux-pro-max", repo: "https://github.com/nextlevelbuilder/ui-ux-pro-max-skill" },
-  // Gemini/xAI image generation via shell scripts. NOTE: its scripts call the
-  // providers directly, so the daemon env carries GEMINI_API_KEY/XAI_API_KEY
-  // into the VM (a deliberate trade-off Salman chose over the /api/img proxy).
-  { name: "claude-image-generation", repo: "https://github.com/hex/claude-image-generation" },
-];
-// passed to the daemon as PHANTOM_PLUGINS so it can resolve the cloned dirs
-export const AGENT_PLUGIN_NAMES = AGENT_PLUGINS.map((p) => p.name).join(",");
-
 // Write the daemon + tool scripts, ensure the Agent SDK is installed, clone
-// the skill plugins, and prepare the browser harness (playwright + MCP).
-export async function ensureBuilder(client: SbClient): Promise<void> {
+// the enabled skill plugins, and prepare the browser harness (playwright + MCP).
+export async function ensureBuilder(client: SbClient, plugins: Plugin[]): Promise<void> {
   await client.fs.writeTextFile("phantom-daemon.mjs", DAEMON_SOURCE);
   await client.fs.writeTextFile("shot.mjs", SHOT_SCRIPT);
   await client.fs.writeTextFile("register-assets.mjs", REGISTER_SCRIPT);
@@ -369,10 +357,11 @@ export async function ensureBuilder(client: SbClient): Promise<void> {
     "node -e \"require.resolve('@anthropic-ai/claude-agent-sdk')\" 2>/dev/null || npm install @anthropic-ai/claude-agent-sdk@0.3.207",
   );
   await ensureGit(client);
-  // clone skill plugins (idempotent + shallow); never fail the build on this
+  // clone enabled skill plugins (idempotent + shallow); never fail the build on
+  // this. Only [a-z0-9._-] names + vetted host repos reach here (resolvePlugins).
   const dir = "$HOME/.phantom-plugins";
   const steps = [`mkdir -p ${dir}`];
-  for (const p of AGENT_PLUGINS) {
+  for (const p of enabledPlugins(plugins)) {
     steps.push(
       `test -d ${dir}/${p.name}/.git || git clone --depth 1 --single-branch -q ${p.repo} ${dir}/${p.name}`,
     );
@@ -400,6 +389,7 @@ export type DaemonEnv = {
   secret: string; // shared control-auth secret
   projectId: string;
   seqBase: number; // current DB max seq — keeps a fresh VM's stream monotonic
+  plugins: Plugin[]; // the project's resolved plugin set (enabled → PHANTOM_PLUGINS)
 };
 
 // Make sure the daemon process is running and current. Respawns on version
@@ -420,7 +410,7 @@ export async function ensureDaemon(client: SbClient, env: DaemonEnv): Promise<vo
       PHANTOM_DAEMON_SECRET: env.secret,
       PHANTOM_PROJECT: env.projectId,
       PHANTOM_SEQ_BASE: String(env.seqBase || 0),
-      PHANTOM_PLUGINS: AGENT_PLUGIN_NAMES,
+      PHANTOM_PLUGINS: pluginNames(env.plugins),
       ...(process.env.GEMINI_API_KEY ? { GEMINI_API_KEY: process.env.GEMINI_API_KEY } : {}),
       ...(process.env.XAI_API_KEY ? { XAI_API_KEY: process.env.XAI_API_KEY } : {}),
     },

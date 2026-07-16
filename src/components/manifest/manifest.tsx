@@ -14,6 +14,7 @@ import type { StoredMessage, PhantomEvent } from "@/lib/projects";
 import { ReplyMd } from "@/components/reply-md";
 import { Transcript } from "@/components/manifest/transcript";
 import { useDaemon } from "@/components/manifest/use-daemon";
+import { PluginsModal } from "@/components/manifest/plugins-modal";
 
 type Row = { verb?: string; target?: string };
 // One apparition's share of a turn. Keyed by variant; "" = legacy single-lane rows.
@@ -231,6 +232,7 @@ export function Manifest({
   // thumbnails and handed to the Phantom with the next word
   const [attachments, setAttachments] = useState<{ media_type: string; data: string; preview: string }[]>([]);
   const composerFileRef = useRef<HTMLInputElement>(null);
+  const [pluginsOpen, setPluginsOpen] = useState(false);
   const legacyTurns = messagesToTurns(initialMessages);
 
   const daemon = useDaemon(project.id, initialEvents, !!b);
@@ -382,6 +384,23 @@ export function Manifest({
               <path d="M12 1.7v2.6H9.4" stroke="currentColor" strokeWidth="1.2" strokeLinecap="round" strokeLinejoin="round" />
             </svg>
             {resetting ? "Resetting…" : "Reset"}
+          </button>
+          <button
+            className="top-action"
+            onClick={() => setPluginsOpen(true)}
+            title="Manage plugins the Phantom builds with"
+          >
+            <svg width="13" height="13" viewBox="0 0 16 16" fill="none" aria-hidden="true">
+              <path
+                d="M6.5 1.5h3l.4 2 1.7 1 1.9-.8 1.5 2.6-1.5 1.3v2l1.5 1.3-1.5 2.6-1.9-.8-1.7 1-.4 2h-3l-.4-2-1.7-1-1.9.8L.5 12.5 2 11.2v-2L.5 7.9 2 5.3l1.9.8 1.7-1 .4-2Z"
+                stroke="currentColor"
+                strokeWidth="1"
+                strokeLinejoin="round"
+                transform="scale(0.86) translate(1.2 1.2)"
+              />
+              <circle cx="8" cy="8" r="2.1" stroke="currentColor" strokeWidth="1" />
+            </svg>
+            Plugins
           </button>
           <button
             className="top-action peek"
@@ -951,6 +970,8 @@ export function Manifest({
           </span>
         </div>
       </aside>
+
+      {pluginsOpen && <PluginsModal projectId={project.id} onClose={() => setPluginsOpen(false)} />}
     </div>
   );
 }

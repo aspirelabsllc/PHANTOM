@@ -10,6 +10,7 @@ import {
   type SbClient,
 } from "@/lib/sandbox";
 import { mintSessionToken } from "@/lib/gateway-token";
+import { resolvePlugins } from "@/lib/plugins";
 import type { Brand, Offering, Variant } from "@/lib/brand";
 
 // Server-side daemon bootstrap: make sure the project has a sandbox, the
@@ -23,6 +24,7 @@ export type ProjectRow = {
   brand: Brand | null;
   offerings: Offering[] | null;
   chosen_variant: Variant | null;
+  plugins?: unknown; // stored plugin registry (null = built-in defaults)
 };
 
 export type DaemonHandle = {
@@ -50,8 +52,9 @@ export async function ensureProjectDaemon(project: ProjectRow): Promise<DaemonHa
     await admin.from("phantom_projects").update({ sandbox_id: boot.sandboxId }).eq("id", project.id);
   }
 
+  const plugins = resolvePlugins(project.plugins);
   const { client } = await connectSandbox(boot.sandboxId);
-  await ensureBuilder(client);
+  await ensureBuilder(client, plugins);
   await writeClaudeMd(client, project.brand ?? null, project.chosen_variant ?? null);
 
   // the current DB max seq — a fresh VM's daemon seeds from this so its event
@@ -66,7 +69,7 @@ export async function ensureProjectDaemon(project: ProjectRow): Promise<DaemonHa
   const seqBase = (top?.seq as number | undefined) ?? 0;
 
   const token = mintSessionToken(project.id, "daemon");
-  await ensureDaemon(client, { token, secret, projectId: project.id, seqBase });
+  await ensureDaemon(client, { token, secret, projectId: project.id, seqBase, plugins });
 
   const url = await daemonHostUrl(boot.sandboxId);
   return { client, sandboxId: boot.sandboxId, secret, url, token, created: boot.created };

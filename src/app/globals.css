@@ -3541,3 +3541,195 @@ button.pa-tag:hover {
   opacity: 0.35;
   cursor: default;
 }
+
+/* ============================================================
+   PLUGINS MODAL — the per-project skill registry
+   ============================================================ */
+.modal-veil {
+  position: fixed;
+  inset: 0;
+  z-index: 60;
+  background: rgba(7, 7, 11, 0.72);
+  backdrop-filter: blur(4px);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 24px;
+  animation: veil-in 0.25s var(--ease-out);
+}
+@keyframes veil-in {
+  from { opacity: 0; }
+  to { opacity: 1; }
+}
+.modal {
+  width: min(560px, 100%);
+  max-height: 86vh;
+  overflow-y: auto;
+  background: var(--panel);
+  border: 1px solid var(--line-bright);
+  border-radius: 10px;
+  padding: 22px 24px 20px;
+  box-shadow: 0 30px 90px rgba(0, 0, 0, 0.55), 0 0 40px rgba(127, 247, 228, 0.05);
+  animation: modal-in 0.3s var(--ease-out);
+}
+@keyframes modal-in {
+  from { opacity: 0; transform: translateY(12px) scale(0.98); }
+  to { opacity: 1; transform: none; }
+}
+.modal-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+.modal-head h2 {
+  font-family: var(--font-display);
+  font-weight: 400;
+  font-size: 22px;
+  color: var(--phosphor);
+  letter-spacing: 0.01em;
+}
+.modal-x {
+  border: none;
+  background: none;
+  color: var(--dim);
+  font-size: 15px;
+  cursor: pointer;
+  padding: 4px 8px;
+  border-radius: 4px;
+}
+.modal-x:hover { color: var(--phosphor); background: rgba(221, 227, 255, 0.06); }
+.modal-sub {
+  margin: 6px 0 16px;
+  font-size: 12.5px;
+  line-height: 1.55;
+  color: var(--dim);
+}
+.plugin-list {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+.plugin-loading {
+  color: var(--faint);
+  font-family: var(--font-mono);
+  font-size: 11px;
+  padding: 12px 0;
+}
+.plugin-row {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 11px 13px;
+  border: 1px solid var(--line-soft);
+  border-radius: 7px;
+  background: rgba(7, 7, 11, 0.4);
+}
+.plugin-row.on { border-color: rgba(127, 247, 228, 0.22); }
+.plugin-toggle {
+  flex: none;
+  width: 34px;
+  height: 19px;
+  border-radius: 10px;
+  border: 1px solid var(--line);
+  background: var(--raised);
+  position: relative;
+  cursor: pointer;
+  transition: background 0.2s var(--ease-out), border-color 0.2s var(--ease-out);
+}
+.plugin-row.on .plugin-toggle {
+  background: rgba(127, 247, 228, 0.25);
+  border-color: rgba(127, 247, 228, 0.5);
+}
+.plugin-toggle .knob {
+  position: absolute;
+  top: 1.5px;
+  left: 1.5px;
+  width: 14px;
+  height: 14px;
+  border-radius: 50%;
+  background: var(--dim);
+  transition: transform 0.2s var(--ease-out), background 0.2s var(--ease-out);
+}
+.plugin-row.on .plugin-toggle .knob {
+  transform: translateX(15px);
+  background: var(--cyan);
+}
+.plugin-meta { flex: 1; min-width: 0; }
+.plugin-name {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 13px;
+  color: var(--phosphor);
+  font-weight: 500;
+}
+.plugin-tag {
+  font-family: var(--font-mono);
+  font-size: 8px;
+  letter-spacing: 0.14em;
+  padding: 2px 5px;
+  border-radius: 3px;
+}
+.plugin-tag.builtin { color: var(--violet); border: 1px solid rgba(157, 140, 255, 0.35); }
+.plugin-tag.custom { color: var(--cyan); border: 1px solid rgba(127, 247, 228, 0.35); }
+.plugin-grant {
+  font-size: 11.5px;
+  color: var(--dim);
+  margin-top: 2px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.plugin-del {
+  flex: none;
+  border: none;
+  background: none;
+  color: var(--faint);
+  cursor: pointer;
+  font-size: 12px;
+  padding: 4px 6px;
+  border-radius: 4px;
+}
+.plugin-del:hover { color: #ff9a9a; background: rgba(255, 122, 122, 0.1); }
+.plugin-add {
+  margin-top: 16px;
+  padding-top: 14px;
+  border-top: 1px solid var(--line-soft);
+}
+.plugin-add-head {
+  font-family: var(--font-mono);
+  font-size: 9.5px;
+  letter-spacing: 0.16em;
+  text-transform: uppercase;
+  color: var(--faint);
+  margin-bottom: 9px;
+}
+.plugin-add-fields {
+  display: flex;
+  gap: 8px;
+}
+.plugin-add-fields input {
+  background: var(--void);
+  border: 1px solid var(--line);
+  border-radius: 5px;
+  padding: 8px 10px;
+  color: var(--phosphor);
+  font-family: var(--font-ui);
+  font-size: 12.5px;
+  outline: none;
+}
+.plugin-add-fields input:first-child { flex: 0 0 130px; }
+.plugin-add-fields input:nth-child(2) { flex: 1; min-width: 0; }
+.plugin-add-fields input:focus { border-color: rgba(127, 247, 228, 0.4); }
+.modal-err {
+  margin-top: 12px;
+  color: #ff9a9a;
+  font-size: 12px;
+  font-family: var(--font-mono);
+}
+.modal-foot {
+  display: flex;
+  justify-content: flex-end;
+  gap: 10px;
+  margin-top: 20px;
+}

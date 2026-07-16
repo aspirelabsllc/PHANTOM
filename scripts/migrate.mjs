@@ -124,6 +124,10 @@ create policy "msg_own_delete" on public.phantom_messages for delete using (
 -- shared secret between the app and this project's in-VM daemon (control auth)
 alter table public.phantom_projects add column if not exists daemon_secret text;
 
+-- per-project plugin registry: [{name, repo, enabled}]. null = use the built-in
+-- default set (ui-ux-pro-max + image generation). User-toggled in the UI.
+alter table public.phantom_projects add column if not exists plugins jsonb;
+
 -- the full agent event stream (M8): one row per SDK event, written by the
 -- in-VM daemon through POST /api/events (service role). seq is assigned by
 -- the daemon and monotonic per project; the UI orders and de-dupes on it.

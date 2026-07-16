@@ -30,7 +30,7 @@ export async function POST(req: NextRequest, ctx: { params: Promise<{ id: string
 
   const { data: project } = await supabase
     .from("phantom_projects")
-    .select("id, sandbox_id, daemon_secret, brand, offerings, chosen_variant")
+    .select("id, sandbox_id, daemon_secret, brand, offerings, chosen_variant, plugins")
     .eq("id", id)
     .maybeSingle();
   if (!project) return NextResponse.json({ error: "not found" }, { status: 404 });
