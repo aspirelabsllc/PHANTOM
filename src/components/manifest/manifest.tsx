@@ -227,6 +227,10 @@ export function Manifest({
   const [previewKey, setPreviewKey] = useState(0);
   const [resetting, setResetting] = useState(false);
   const [sayErr, setSayErr] = useState<string | null>(null);
+  // reference images pasted/attached into the composer (base64), shown as
+  // thumbnails and handed to the Phantom with the next word
+  const [attachments, setAttachments] = useState<{ media_type: string; data: string; preview: string }[]>([]);
+  const composerFileRef = useRef<HTMLInputElement>(null);
   const legacyTurns = messagesToTurns(initialMessages);
 
   const daemon = useDaemon(project.id, initialEvents, !!b);
@@ -289,16 +293,38 @@ export function Manifest({
     }
   }
 
+  // Read image files/blobs into base64 attachments (capped, ≤4 total, ≤8MB each).
+  async function addImages(files: (File | null)[]) {
+    const imgs = files.filter((f): f is File => !!f && f.type.startsWith("image/"));
+    if (!imgs.length) return;
+    const room = 4 - attachments.length;
+    for (const f of imgs.slice(0, Math.max(0, room))) {
+      if (f.size > 8 * 1024 * 1024) continue;
+      const data = await new Promise<string>((resolve) => {
+        const r = new FileReader();
+        r.onload = () => resolve(String(r.result).split(",")[1] ?? "");
+        r.readAsDataURL(f);
+      });
+      if (!data) continue;
+      setAttachments((a) =>
+        a.length >= 4 ? a : [...a, { media_type: f.type, data, preview: `data:${f.type};base64,${data}` }],
+      );
+    }
+  }
+
   async function speak(text: string) {
     const say = text.trim();
-    if (!say || daemon.saying || !preview) return;
+    if ((!say && !attachments.length) || daemon.saying || !preview) return;
+    const imgs = attachments.map(({ media_type, data }) => ({ media_type, data }));
     setDraft("");
+    setAttachments([]);
     setSayErr(null);
     try {
-      await daemon.say(say);
+      await daemon.say(say || "Use this reference.", imgs);
     } catch (e) {
       setSayErr(e instanceof Error ? e.message : "The word did not reach the chamber.");
       setDraft(say); // give the words back
+      setAttachments((a) => (a.length ? a : attachments)); // and the images
     }
   }
 
@@ -495,7 +521,54 @@ export function Manifest({
           {sayErr && <div className="sys-row err">{sayErr}</div>}
         </div>
         <div className="m-composer">
+          {!!attachments.length && (
+            <div className="composer-atts" aria-label="Attached reference images">
+              {attachments.map((a, i) => (
+                <div className="att-thumb" key={i}>
+                  {/* eslint-disable-next-line @next/next/no-img-element -- local data URI */}
+                  <img src={a.preview} alt={`reference ${i + 1}`} />
+                  <button
+                    className="att-del"
+                    onClick={() => setAttachments((list) => list.filter((_, j) => j !== i))}
+                    aria-label="Remove reference"
+                    title="Remove"
+                  >
+                    ✕
+                  </button>
+                </div>
+              ))}
+            </div>
+          )}
           <div className="field">
+            <button
+              className="composer-attach"
+              type="button"
+              onClick={() => composerFileRef.current?.click()}
+              disabled={!preview || attachments.length >= 4}
+              title="Attach a reference image"
+              aria-label="Attach a reference image"
+            >
+              <svg width="15" height="15" viewBox="0 0 16 16" fill="none" aria-hidden="true">
+                <path
+                  d="M13 7l-5.2 5.2a3 3 0 0 1-4.2-4.2L8 3a2 2 0 0 1 2.8 2.8l-4.9 4.9a1 1 0 0 1-1.4-1.4L9 5"
+                  stroke="currentColor"
+                  strokeWidth="1.2"
+                  strokeLinecap="round"
+                  strokeLinejoin="round"
+                />
+              </svg>
+            </button>
+            <input
+              ref={composerFileRef}
+              type="file"
+              accept="image/*"
+              multiple
+              hidden
+              onChange={(e) => {
+                addImages(Array.from(e.target.files ?? []));
+                if (composerFileRef.current) composerFileRef.current.value = "";
+              }}
+            />
             <textarea
               className="refine-input"
               rows={1}
@@ -506,11 +579,20 @@ export function Manifest({
                   : building
                     ? "Speak — the Phantom hears you even as it works…  (⇧↵ newline)"
                     : chosen
-                      ? "Speak to the claimed form…  (⇧↵ newline)"
-                      : "Speak — all three apparitions will heed…  (⇧↵ newline)"
+                      ? "Speak to the claimed form…  (paste an image, ⇧↵ newline)"
+                      : "Speak — all three apparitions will heed…  (paste an image, ⇧↵ newline)"
               }
               value={draft}
               onChange={(e) => setDraft(e.target.value)}
+              onPaste={(e) => {
+                const imgs = Array.from(e.clipboardData.items)
+                  .filter((it) => it.type.startsWith("image/"))
+                  .map((it) => it.getAsFile());
+                if (imgs.length) {
+                  e.preventDefault();
+                  addImages(imgs);
+                }
+              }}
               onKeyDown={(e) => {
                 if (e.key === "Enter" && !e.shiftKey) {
                   e.preventDefault();

@@ -35,14 +35,11 @@ export async function POST(req: NextRequest, ctx: { params: Promise<{ id: string
     }
     await supabase.from("phantom_messages").delete().eq("project_id", id);
     await supabase.from("phantom_events").delete().eq("project_id", id);
-    await supabase
-      .from("phantom_projects")
-      .update({
-        agent_session_id: null,
-        agent_sessions: {},
-        ...(scope === "full" ? { chosen_variant: null, building: null } : {}),
-      })
-      .eq("id", id);
+    // the daemon owns its session in the VM (wiped above); a full reset also
+    // re-opens the summons by un-claiming the chosen form
+    if (scope === "full") {
+      await supabase.from("phantom_projects").update({ chosen_variant: null }).eq("id", id);
+    }
     return NextResponse.json({ ok: true, scope });
   } catch (err) {
     const message = err instanceof Error ? err.message : "reset failed";

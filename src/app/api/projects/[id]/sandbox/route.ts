@@ -27,15 +27,7 @@ export async function POST(_req: NextRequest, ctx: { params: Promise<{ id: strin
   try {
     const { sandboxId, previewUrl, created } = await bootSandbox(project.sandbox_id ?? null);
     if (created || sandboxId !== project.sandbox_id) {
-      // a freshly created VM has no ~/.claude transcripts → old session ids are
-      // stale and would make `resume` fail, so drop them with the new sandbox id
-      await supabase
-        .from("phantom_projects")
-        .update({
-          sandbox_id: sandboxId,
-          ...(created ? { agent_session_id: null, agent_sessions: {} } : {}),
-        })
-        .eq("id", id);
+      await supabase.from("phantom_projects").update({ sandbox_id: sandboxId }).eq("id", id);
     }
     // opportunistically push the vault's assets into the VM (never blocks boot)
     syncProjectAssets(sandboxId, (project.offerings as Offering[]) ?? [], project.brand as Brand | null).catch(

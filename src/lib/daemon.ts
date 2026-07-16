@@ -47,13 +47,7 @@ export async function ensureProjectDaemon(project: ProjectRow): Promise<DaemonHa
   // sandbox — boot or wake
   const boot = await bootSandbox(project.sandbox_id ?? null);
   if (boot.created || boot.sandboxId !== project.sandbox_id) {
-    await admin
-      .from("phantom_projects")
-      .update({
-        sandbox_id: boot.sandboxId,
-        ...(boot.created ? { agent_session_id: null, agent_sessions: {} } : {}),
-      })
-      .eq("id", project.id);
+    await admin.from("phantom_projects").update({ sandbox_id: boot.sandboxId }).eq("id", project.id);
   }
 
   const { client } = await connectSandbox(boot.sandboxId);
