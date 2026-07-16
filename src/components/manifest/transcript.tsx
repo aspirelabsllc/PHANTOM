@@ -54,6 +54,12 @@ function isSummon(name: string): boolean {
   return name === "Task" || name === "Agent";
 }
 
+// The claude_code preset drives its plan through TaskCreate/TaskUpdate/TaskList
+// rather than TodoWrite — fold them into the same live checklist.
+function isPlanTool(name: string): boolean {
+  return name === "TaskCreate" || name === "TaskUpdate" || name === "TaskList";
+}
+
 function verbOf(name: string): string {
   if (name.startsWith("mcp__playwright")) return "BROWSE";
   if (name.startsWith("mcp__")) return "MCP";
@@ -81,10 +87,37 @@ function buildItems(events: PhantomEvent[]): Item[] {
   const items: Item[] = [];
   const tools = new Map<string, ToolItem>();
   const todoOf = new Map<string, Item & { kind: "todo" }>(); // lane → live checklist
+  // lane → the plan checklist assembled from TaskCreate/TaskUpdate calls
+  const planOf = new Map<string, { card: Item & { kind: "todo" }; order: string[] }>();
 
   const laneOf = (parent: unknown): Item[] => {
     if (typeof parent === "string" && tools.has(parent)) return tools.get(parent)!.children;
     return items;
+  };
+
+  // Fold a TaskCreate/TaskUpdate into the lane's live plan checklist. TaskCreate
+  // appends a pending item; TaskUpdate flips its status (matched by the 1-based
+  // taskId the preset assigns in creation order).
+  const applyPlan = (parent: unknown, name: string, input: Record<string, unknown>) => {
+    if (name === "TaskList") return;
+    const laneKey = typeof parent === "string" ? parent : "";
+    let plan = planOf.get(laneKey);
+    if (!plan) {
+      const card = { kind: "todo" as const, todos: [] as { content?: string; status?: string }[] };
+      plan = { card, order: [] };
+      planOf.set(laneKey, plan);
+      laneOf(parent).push(card);
+    }
+    if (name === "TaskCreate") {
+      const subject = String(input.subject ?? input.description ?? "task");
+      plan.order.push(subject);
+      plan.card.todos.push({ content: subject, status: "pending" });
+    } else if (name === "TaskUpdate") {
+      const id = Number(input.taskId ?? input.task_id ?? 0);
+      const status = String(input.status ?? "");
+      const idx = id > 0 ? id - 1 : plan.card.todos.length - 1;
+      if (plan.card.todos[idx] && status) plan.card.todos[idx].status = status;
+    }
   };
 
   for (const ev of events) {
@@ -117,10 +150,16 @@ function buildItems(events: PhantomEvent[]): Item[] {
         break;
       }
       case "tool_use": {
+        const name = String(p.name ?? "?");
+        // plan tools fold into the lane's checklist instead of a tool row
+        if (isPlanTool(name)) {
+          applyPlan(p.parent, name, (p.input ?? {}) as Record<string, unknown>);
+          break;
+        }
         const t: ToolItem = {
           kind: "tool",
           id: String(p.id ?? ""),
-          name: String(p.name ?? "?"),
+          name,
           input: (p.input ?? {}) as Record<string, unknown>,
           result: null,
           children: [],
@@ -136,6 +175,7 @@ function buildItems(events: PhantomEvent[]): Item[] {
       }
       case "result":
         todoOf.clear();
+        planOf.clear();
         items.push({
           kind: "result",
           subtype: p.subtype as string,
@@ -161,6 +201,7 @@ function buildItems(events: PhantomEvent[]): Item[] {
         break;
       case "interrupted":
         todoOf.clear();
+        planOf.clear();
         items.push({ kind: "interrupted" });
         break;
       case "rewind":
