@@ -66,3 +66,11 @@ export async function ensureProjectDaemon(project: ProjectRow): Promise<DaemonHa
   const url = await daemonHostUrl(boot.sandboxId);
   return { client, sandboxId: boot.sandboxId, secret, url, token, created: boot.created };
 }
+
+// Build a control endpoint on the signed host URL without clobbering its
+// query string (the CSB preview token lives there).
+export function daemonEndpoint(handle: Pick<DaemonHandle, "url" | "secret">, path: string): string {
+  const u = new URL(handle.url);
+  u.pathname = path;
+  return u.toString();
+}

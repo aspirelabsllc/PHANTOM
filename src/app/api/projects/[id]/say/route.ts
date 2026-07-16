@@ -1,6 +1,6 @@
 import { NextResponse, type NextRequest } from "next/server";
 import { createClient } from "@/lib/supabase/server";
-import { ensureProjectDaemon, type ProjectRow } from "@/lib/daemon";
+import { ensureProjectDaemon, daemonEndpoint, type ProjectRow } from "@/lib/daemon";
 import { buildAssetFiles } from "@/lib/assets";
 import { syncAssets } from "@/lib/sandbox";
 import type { Brand, Offering } from "@/lib/brand";
@@ -61,7 +61,7 @@ export async function POST(req: NextRequest, ctx: { params: Promise<{ id: string
       ? `The invoker has claimed apparition "${chosen}" (designs/${chosen}/) — it is THE site; address it alone.`
       : "No apparition is claimed — the summons is open: this word goes to all three forms (parallel design-builder subagents).";
 
-    const res = await fetch(`${handle.url}/say`, {
+    const res = await fetch(daemonEndpoint(handle, "/say"), {
       method: "POST",
       headers: { "content-type": "application/json", "x-phantom-auth": handle.secret },
       body: JSON.stringify({
