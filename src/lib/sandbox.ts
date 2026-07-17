@@ -121,10 +121,9 @@ export async function bootSandbox(existingId: string | null): Promise<BootResult
       const sb = await s.sandboxes.resume(sandboxId);
       const client = (await sb.connect()) as unknown as SbClient;
       await ensureStarter(client);
-      // ensure the dev server is up (it may have died while hibernated)
-      await client.commands.runBackground(
-        `pgrep -f 'vite' >/dev/null 2>&1 || npm run dev`,
-      );
+      // gate on the actual port — restarts a wedged/hibernated vite and waits
+      // until it serves, so the preview URL we return never 502s
+      await ensureDevServer(client);
     } catch {
       sandboxId = null;
     }
@@ -133,12 +132,12 @@ export async function bootSandbox(existingId: string | null): Promise<BootResult
   if (!sandboxId) {
     const sb = await s.sandboxes.create();
     sandboxId = sb.id;
-    const client = await sb.connect();
+    const client = (await sb.connect()) as unknown as SbClient;
     for (const [path, content] of Object.entries(STARTER)) {
       await client.fs.writeTextFile(path, content);
     }
     await client.commands.run("npm install");
-    await client.commands.runBackground("npm run dev");
+    await ensureDevServer(client);
     created = true;
   }
 
@@ -163,6 +162,45 @@ export type SbClient = {
   };
 };
 
+// Health-check on the ACTUAL dev-server port, not just the process: a vite
+// that survived a `git reset` (rewind) or a scaffold rewrite can be alive yet
+// wedged (process up, 5173 dead) — a pgrep check would wrongly pass and the
+// preview 502s. Curl the port; if it isn't 200, hard-restart vite detached
+// (so the kill can't SIGTERM this command) and poll until it answers. Returns
+// true when the server is serving.
+export async function ensureDevServer(client: SbClient): Promise<boolean> {
+  const probe = async () =>
+    (
+      await client.commands.run(
+        "curl -s -m 3 -o /dev/null -w '%{http_code}' http://localhost:5173/ || echo 000",
+      )
+    ).trim();
+
+  if ((await probe()) === "200") return true;
+
+  // The dev-server config is never agent-owned, but a rewind (git reset) or a
+  // stray edit can blank it — and an empty vite.config.js loses allowedHosts,
+  // so vite rejects the *.csb.app Host header and the preview 502s. Restore the
+  // known-good scaffold config before (re)starting.
+  await client.fs.writeTextFile("vite.config.js", STARTER["vite.config.js"]);
+  await client.fs.writeTextFile("package.json", STARTER["package.json"]);
+
+  // free the port + reinstall deps if they vanished. `[v]ite` bracket trick:
+  // the pattern must NOT match this pkill command's own line (a bare 'vite'
+  // would, and pkill -9 would kill itself). strictPort means a lingering vite
+  // makes the new one exit, so a hard kill first is essential.
+  await client.commands.run(
+    "pkill -9 -f '[v]ite' 2>/dev/null; sleep 2; test -d node_modules/@tailwindcss/vite || npm install; true",
+  );
+  // start detached through CSB's own background runner (keeps it alive)
+  await client.commands.runBackground("npm run dev");
+  for (let i = 0; i < 30; i++) {
+    if ((await probe()) === "200") return true;
+    await new Promise((r) => setTimeout(r, 2000));
+  }
+  return false; // caller surfaces a soft "chamber warming" state, not a 502
+}
+
 // Migrate a VM that predates the current starter layout (e.g. the React-era
 // scaffold): rewrite the scaffold files, drop the dead React app, and let
 // Vite restart itself off the config change. Idempotent and cheap when current.
@@ -184,7 +222,7 @@ export async function connectSandbox(
   const sb = await s.sandboxes.resume(sandboxId);
   const client = (await sb.connect()) as unknown as SbClient;
   await ensureStarter(client);
-  await client.commands.runBackground(`pgrep -f 'vite' >/dev/null 2>&1 || npm run dev`);
+  await ensureDevServer(client);
   const token = await s.hosts.createToken(sandboxId, {
     expiresAt: new Date(Date.now() + 24 * 60 * 60 * 1000),
   });
@@ -218,8 +256,24 @@ export async function resetSandboxFiles(sandboxId: string): Promise<void> {
     await client.fs.writeTextFile(path, content);
   }
   await ensureGit(client);
-  await client.commands.runBackground("pgrep -f 'vite' >/dev/null 2>&1 || npm run dev");
+  await ensureDevServer(client);
 }
+
+// The scaffold files a checkpoint must never own — so a rewind (git reset)
+// can only ever touch the agent's work (designs/, public/, CLAUDE.md), never
+// the dev-server config. Untracking them means a reset leaves them intact.
+const GITIGNORE = [
+  "node_modules",
+  ".phantom-daemon.json",
+  "assets.json",
+  "vite.config.js",
+  "package.json",
+  "package-lock.json",
+  "phantom-daemon.mjs",
+  "shot.mjs",
+  "register-assets.mjs",
+  "sync-assets.mjs",
+].join("\\n");
 
 // Idempotent git checkpointing baseline for the rewind feature.
 async function ensureGit(client: SbClient): Promise<void> {
@@ -228,7 +282,10 @@ async function ensureGit(client: SbClient): Promise<void> {
       "test -d .git || git init -q -b main",
       "git config user.email phantom@aspirelabs.dev",
       "git config user.name 'The Phantom'",
-      "grep -q node_modules .gitignore 2>/dev/null || printf 'node_modules\\n.phantom-daemon.json\\nassets.json\\n' >> .gitignore",
+      // always (re)write the ignore list so older VMs pick up new entries, then
+      // stop tracking anything now ignored (rm --cached; harmless if untracked)
+      `printf '${GITIGNORE}\\n' > .gitignore`,
+      "git rm -r --cached --quiet -- vite.config.js package.json package-lock.json phantom-daemon.mjs shot.mjs register-assets.mjs sync-assets.mjs 2>/dev/null || true",
       "git add -A",
       "(git diff --cached --quiet && git rev-parse HEAD >/dev/null 2>&1) || git commit -q -m 'checkpoint: scaffold' || true",
     ].join(" ; ") + " ; true",

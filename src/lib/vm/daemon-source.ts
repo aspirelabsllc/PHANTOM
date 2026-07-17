@@ -8,7 +8,7 @@
 // daemon code — use string concatenation.
 
 // Bump to force a daemon respawn on deploy (ensureDaemon compares /health).
-export const DAEMON_VERSION = "4";
+export const DAEMON_VERSION = "5";
 
 export const DAEMON_SOURCE = `// phantom-daemon.mjs (generated — do not edit in the VM)
 import { createServer } from 'node:http';
@@ -452,6 +452,15 @@ const server = createServer(async (req, res) => {
     if (!sha) return json(res, 400, { error: 'bad sha' });
     try {
       execSync('git reset --hard ' + sha, { timeout: 15000 });
+      // a hard reset rewrites files under the running vite, which can wedge the
+      // dev server (process alive, port dead → 502). Nudge it back, detached so
+      // the kill can't reach this handler.
+      try {
+        spawn('sh', ['-c', "pkill -9 -f '[v]ite' 2>/dev/null; sleep 1; nohup npm run dev >/tmp/vite.log 2>&1 &"], {
+          stdio: 'ignore',
+          detached: true,
+        }).unref();
+      } catch {}
       lastRewind = sha;
       emit('rewind', { sha: sha });
       return json(res, 200, { ok: true });
