@@ -8,7 +8,7 @@
 // daemon code — use string concatenation.
 
 // Bump to force a daemon respawn on deploy (ensureDaemon compares /health).
-export const DAEMON_VERSION = "6";
+export const DAEMON_VERSION = "7";
 
 export const DAEMON_SOURCE = `// phantom-daemon.mjs (generated — do not edit in the VM)
 import { createServer } from 'node:http';
@@ -176,7 +176,7 @@ function agentOptions() {
     'For design decisions, first invoke the ui-ux-pro-max skill and apply its guidance, always subordinate to CLAUDE.md rules.',
     'MOTION is where these designs win. For anything beyond a trivial transition — scroll-driven reveals, pinned/scrubbed sections, timelines, split-text headline reveals — use GSAP (already available, all plugins free): invoke the gsap-skills (gsap-core, gsap-scrolltrigger, gsap-timeline, gsap-plugins, gsap-performance) for correct current patterns. Load GSAP + ScrollTrigger + SplitText from a CDN script tag. Prefer native CSS scroll-driven animations (animation-timeline: view()) for simple reveals to stay light; reach for GSAP when the motion is the point. Respect prefers-reduced-motion.',
     'CURRENT APIs: this is Tailwind v4 (CSS-first) — a single @import "tailwindcss"; line, theme tokens via @theme, NO tailwind.config.js, NO @tailwind base/components/utilities. When unsure of ANY current library API (Tailwind v4, GSAP, Three.js, Lenis), query the Context7 MCP (resolve-library-id then get-library-docs) before writing — do not guess from memory, which skews to outdated versions. GitMCP is a keyless fallback for any GitHub repo docs.',
-    'ICONS: use the better-icons MCP to find the exact Iconify token from a description (e.g. "minimal arrow" -> lucide:arrow-right) and get its SVG; inline the SVG or use <iconify-icon icon="set:name">. Never hand-draw SVG path data.',
+    'ICONS — this is a hard rule, applies EVERY time without being asked: any glyph at all (rating stars, arrows, chevrons, social logos, feature bullets, checkmarks, UI affordances) comes from the better-icons MCP. Search it for the token (e.g. "star" -> lucide:star, "arrow" -> lucide:arrow-right), then inline the returned SVG or use <iconify-icon icon="set:name">. NEVER hand-write SVG path data, and NEVER use unicode/emoji characters (★ ☆ → ✓) as iconography.',
     'SEE your work before finishing: node shot.mjs /tmp/<variant>.png desktop /designs/<variant>/ (also tablet + phone), then Read the PNG. For motion/interaction, drive the playwright MCP browser against http://localhost:5173 to verify it actually behaves. Critique honestly — layout, spacing, hierarchy, contrast, overflow, broken elements, motion — fix and re-shoot until it genuinely looks good.',
     'Work decisively. When done, report ONE short paragraph: art direction, sections built, standout details. The main Phantom reads it; the invoker never sees it directly.',
   ].join(String.fromCharCode(10));
@@ -225,6 +225,11 @@ function agentOptions() {
         // AgentDefinition.mcpServers is an array of specs; wrap the record so the
         // builder (which writes the code) gets the same docs/icon/browser servers
         mcpServers: [mcpServers],
+        // pinned reminder so the toolset is treated as default equipment, not
+        // something to use only when asked (agents skip tools they think they
+        // don't need — this keeps icon/motion/docs lookups habitual)
+        criticalSystemReminder_EXPERIMENTAL:
+          'Your tools are standard equipment, used by default without being asked: better-icons for EVERY icon or glyph (stars, arrows, social, checkmarks — never hand-draw SVG or use unicode/emoji); the gsap-skills + GSAP for any motion that is a feature (hero, scrub, pinned, staggered choreography), native CSS for light reveals; Context7 to confirm the CURRENT API of Tailwind v4 / GSAP / any library before writing (do not trust memory — it skews old); the playwright browser to actually verify interaction and motion, not just a screenshot.',
         model: 'inherit',
         permissionMode: 'bypassPermissions',
       },
