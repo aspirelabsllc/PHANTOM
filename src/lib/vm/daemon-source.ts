@@ -8,7 +8,7 @@
 // daemon code — use string concatenation.
 
 // Bump to force a daemon respawn on deploy (ensureDaemon compares /health).
-export const DAEMON_VERSION = "5";
+export const DAEMON_VERSION = "6";
 
 export const DAEMON_SOURCE = `// phantom-daemon.mjs (generated — do not edit in the VM)
 import { createServer } from 'node:http';
@@ -174,9 +174,35 @@ function agentOptions() {
     'Brand assets are served at /assets/<file>. Read public/assets/manifest.json to see what exists. Prefer real assets over placeholders; load brand fonts with font-face pointing at /assets/<file>.',
     'Build the page FIRST, completely, using existing assets and tasteful non-image treatments as stand-ins. Only THEN conjure new imagery — at most 4 images — with: bash ' + PLUGIN_BASE + '/claude-image-generation/scripts/gemini.sh --mode generate --prompt "rich specific prompt" --aspect-ratio 16:9 --output public/assets/<fresh-slug>.png (or xai.sh; edit an image with --mode edit --input-image). Write outputs ONLY into public/assets/ under a fresh slug and reference them as /assets/<slug>.png.',
     'For design decisions, first invoke the ui-ux-pro-max skill and apply its guidance, always subordinate to CLAUDE.md rules.',
-    'SEE your work before finishing: node shot.mjs /tmp/<variant>.png desktop /designs/<variant>/ (also tablet + phone), then Read the PNG. Critique honestly — layout, spacing, hierarchy, contrast, overflow, broken elements — fix and re-shoot until it genuinely looks good.',
+    'MOTION is where these designs win. For anything beyond a trivial transition — scroll-driven reveals, pinned/scrubbed sections, timelines, split-text headline reveals — use GSAP (already available, all plugins free): invoke the gsap-skills (gsap-core, gsap-scrolltrigger, gsap-timeline, gsap-plugins, gsap-performance) for correct current patterns. Load GSAP + ScrollTrigger + SplitText from a CDN script tag. Prefer native CSS scroll-driven animations (animation-timeline: view()) for simple reveals to stay light; reach for GSAP when the motion is the point. Respect prefers-reduced-motion.',
+    'CURRENT APIs: this is Tailwind v4 (CSS-first) — a single @import "tailwindcss"; line, theme tokens via @theme, NO tailwind.config.js, NO @tailwind base/components/utilities. When unsure of ANY current library API (Tailwind v4, GSAP, Three.js, Lenis), query the Context7 MCP (resolve-library-id then get-library-docs) before writing — do not guess from memory, which skews to outdated versions. GitMCP is a keyless fallback for any GitHub repo docs.',
+    'ICONS: use the better-icons MCP to find the exact Iconify token from a description (e.g. "minimal arrow" -> lucide:arrow-right) and get its SVG; inline the SVG or use <iconify-icon icon="set:name">. Never hand-draw SVG path data.',
+    'SEE your work before finishing: node shot.mjs /tmp/<variant>.png desktop /designs/<variant>/ (also tablet + phone), then Read the PNG. For motion/interaction, drive the playwright MCP browser against http://localhost:5173 to verify it actually behaves. Critique honestly — layout, spacing, hierarchy, contrast, overflow, broken elements, motion — fix and re-shoot until it genuinely looks good.',
     'Work decisively. When done, report ONE short paragraph: art direction, sections built, standout details. The main Phantom reads it; the invoker never sees it directly.',
   ].join(String.fromCharCode(10));
+
+  // skills the enabled plugins expose (computed server-side, passed via env);
+  // fall back to the two originals if the env is missing (older app version)
+  const skills = (process.env.PHANTOM_SKILLS || 'ui-ux-pro-max:ui-ux-pro-max,claude-image-generation:image-generation')
+    .split(',').map((s) => s.trim()).filter(Boolean);
+
+  // MCP servers: Playwright (browser), Context7 (live version-correct docs for
+  // any library — essential for Tailwind v4, which ships no skill), better-icons
+  // (Iconify token + SVG search), GitMCP (keyless docs fallback for any repo).
+  const ctx7Key = process.env.CONTEXT7_API_KEY || '';
+  const mcpServers = {
+    playwright: {
+      type: 'stdio',
+      command: 'node',
+      args: [TOOLS + '/node_modules/@playwright/mcp/cli.js', '--headless', '--isolated'],
+    },
+    context7: Object.assign(
+      { type: 'http', url: 'https://mcp.context7.com/mcp' },
+      ctx7Key ? { headers: { CONTEXT7_API_KEY: ctx7Key } } : {},
+    ),
+    gitmcp: { type: 'http', url: 'https://gitmcp.io/docs' },
+    'better-icons': { type: 'stdio', command: 'npx', args: ['-y', 'better-icons'] },
+  };
 
   return {
     model: MODEL,
@@ -189,19 +215,16 @@ function agentOptions() {
     settingSources: ['project'],
     env: Object.assign({}, process.env, { ANTHROPIC_API_KEY: gwToken, IS_SANDBOX: '1' }),
     plugins: plugins,
-    skills: ['ui-ux-pro-max:ui-ux-pro-max', 'claude-image-generation:image-generation'],
-    mcpServers: {
-      playwright: {
-        type: 'stdio',
-        command: 'node',
-        args: [TOOLS + '/node_modules/@playwright/mcp/cli.js', '--headless', '--isolated'],
-      },
-    },
+    skills: skills,
+    mcpServers: mcpServers,
     agents: {
       'design-builder': {
         description: 'Builds one apparition (design variant) of the site in its own designs/<variant>/ directory.',
         prompt: builderPrompt,
-        skills: ['ui-ux-pro-max:ui-ux-pro-max', 'claude-image-generation:image-generation'],
+        skills: skills,
+        // AgentDefinition.mcpServers is an array of specs; wrap the record so the
+        // builder (which writes the code) gets the same docs/icon/browser servers
+        mcpServers: [mcpServers],
         model: 'inherit',
         permissionMode: 'bypassPermissions',
       },

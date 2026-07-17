@@ -2,7 +2,7 @@ import { CodeSandbox } from "@codesandbox/sdk";
 import { VARIANTS, VARIANT_META, type AssetFile, type Brand, type Variant } from "@/lib/brand";
 import { DAEMON_SOURCE, DAEMON_VERSION } from "@/lib/vm/daemon-source";
 import { buildClaudeMd } from "@/lib/claude-md";
-import { enabledPlugins, pluginNames, type Plugin } from "@/lib/plugins";
+import { enabledPlugins, pluginNames, skillNames, type Plugin } from "@/lib/plugins";
 
 // The sandbox runtime for the Manifest — a CodeSandbox VM per project that
 // holds a real Vite + Tailwind static site (plain HTML/CSS/JS, no framework)
@@ -438,6 +438,10 @@ export async function ensureBuilder(client: SbClient, plugins: Plugin[]): Promis
   steps.push(
     `test -d $HOME/.cache/ms-playwright || (cd ${tools} && npx --yes playwright install --with-deps chromium >/dev/null 2>&1)`,
   );
+  // pre-warm the better-icons MCP (global install so the daemon's `npx
+  // better-icons` resolves instantly instead of a cold registry fetch; never
+  // run it bare here — with no args it starts the stdio server and would block)
+  steps.push(`command -v better-icons >/dev/null 2>&1 || npm i -g better-icons >/dev/null 2>&1`);
   await client.commands.run(steps.join(" ; ") + " ; true");
 }
 
@@ -468,8 +472,12 @@ export async function ensureDaemon(client: SbClient, env: DaemonEnv): Promise<vo
       PHANTOM_PROJECT: env.projectId,
       PHANTOM_SEQ_BASE: String(env.seqBase || 0),
       PHANTOM_PLUGINS: pluginNames(env.plugins),
+      PHANTOM_SKILLS: skillNames(env.plugins).join(","),
       ...(process.env.GEMINI_API_KEY ? { GEMINI_API_KEY: process.env.GEMINI_API_KEY } : {}),
       ...(process.env.XAI_API_KEY ? { XAI_API_KEY: process.env.XAI_API_KEY } : {}),
+      // live docs MCP (Context7) — keyless works but is throttled; the free
+      // key raises the cap. Absent = daemon runs Context7 keyless.
+      ...(process.env.CONTEXT7_API_KEY ? { CONTEXT7_API_KEY: process.env.CONTEXT7_API_KEY } : {}),
     },
   });
   // wait for the control server to come up (fresh spawn only)

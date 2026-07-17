@@ -31,7 +31,36 @@ export const DEFAULT_PLUGINS: Plugin[] = [
     label: "Image Generation",
     grants: "Conjure imagery in-VM via Gemini & Grok (xAI).",
   },
+  {
+    name: "gsap-skills",
+    repo: "https://github.com/greensock/gsap-skills",
+    enabled: true,
+    builtin: true,
+    label: "GSAP Motion",
+    grants: "Official GreenSock skills — scroll-driven, timeline, SplitText, performance (all free).",
+  },
 ];
+
+// The plugin's skills to preload into the agent (name+description available;
+// full SKILL.md loads only when the agent invokes one). Keyed by plugin name;
+// omitted plugins load whatever their manifest exposes. React/framework skills
+// are deliberately excluded — we build plain HTML.
+export const PLUGIN_SKILLS: Record<string, string[]> = {
+  "ui-ux-pro-max": ["ui-ux-pro-max:ui-ux-pro-max"],
+  "claude-image-generation": ["claude-image-generation:image-generation"],
+  "gsap-skills": [
+    "gsap-skills:gsap-core",
+    "gsap-skills:gsap-timeline",
+    "gsap-skills:gsap-scrolltrigger",
+    "gsap-skills:gsap-plugins",
+    "gsap-skills:gsap-performance",
+  ],
+};
+
+// The skill identifiers to hand the agent for a given enabled plugin set.
+export function skillNames(plugins: Plugin[]): string[] {
+  return enabledPlugins(plugins).flatMap((p) => PLUGIN_SKILLS[p.name] ?? []);
+}
 
 const NAME_RE = /^[a-z0-9][a-z0-9._-]{0,60}$/i;
 const REPO_RE = /^https:\/\/(github\.com|gitlab\.com|bitbucket\.org)\/[\w.-]+\/[\w.-]+?(\.git)?$/i;
