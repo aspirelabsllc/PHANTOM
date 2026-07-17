@@ -8,10 +8,10 @@
 // daemon code — use string concatenation.
 
 // Bump to force a daemon respawn on deploy (ensureDaemon compares /health).
-export const DAEMON_VERSION = "8";
+export const DAEMON_VERSION = "9";
 
 export const DAEMON_SOURCE = `// phantom-daemon.mjs (generated — do not edit in the VM)
-import { createServer } from 'node:http';
+import { createServer, get as httpGet } from 'node:http';
 import { readFileSync, writeFileSync } from 'node:fs';
 import { execSync, spawn } from 'node:child_process';
 import { query } from '@anthropic-ai/claude-agent-sdk';
@@ -385,6 +385,37 @@ async function runForever() {
   }
 }
 runForever();
+
+// ---------- vite watchdog ----------
+// A heavy parallel build (3 subagents + image-gen) can OOM/crash vite, which
+// silently breaks the agents' screenshot verification (shot.mjs curls :5173)
+// and the live preview. The daemon is the always-on process, so it keeps vite
+// alive: probe the port (non-blocking http, never a blocking curl); if it's
+// down two checks running, revive it detached. Two-strike to ignore a brief
+// HMR reload. Only revives when actually down — never disrupts a healthy vite.
+let viteDownStreak = 0;
+function probeVite(cb) {
+  const req = httpGet({ host: '127.0.0.1', port: 5173, path: '/', timeout: 3000 }, (res) => {
+    res.resume();
+    cb(res.statusCode > 0);
+  });
+  req.on('error', () => cb(false));
+  req.on('timeout', () => { req.destroy(); cb(false); });
+}
+setInterval(() => {
+  probeVite((up) => {
+    if (up) { viteDownStreak = 0; return; }
+    if (++viteDownStreak < 2) return;
+    viteDownStreak = 0;
+    try {
+      spawn('sh', ['-c', "pkill -9 -f '[v]ite' 2>/dev/null; sleep 1; nohup npm run dev >/tmp/vite.log 2>&1 &"], {
+        stdio: 'ignore',
+        detached: true,
+      }).unref();
+      emit('notice', { text: 'The chamber flickered — reviving the preview.' }, true);
+    } catch {}
+  });
+}, 20000).unref();
 
 // ---------- control server ----------
 function cors(res) {
