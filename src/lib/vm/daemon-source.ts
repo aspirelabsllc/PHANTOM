@@ -8,7 +8,7 @@
 // daemon code — use string concatenation.
 
 // Bump to force a daemon respawn on deploy (ensureDaemon compares /health).
-export const DAEMON_VERSION = "9";
+export const DAEMON_VERSION = "10";
 
 export const DAEMON_SOURCE = `// phantom-daemon.mjs (generated — do not edit in the VM)
 import { createServer, get as httpGet } from 'node:http';
@@ -175,7 +175,7 @@ function agentOptions() {
     'Your task prompt names your variant and directory designs/<variant>/. Edit ONLY inside that directory: index.html, styles.css, script.js (more pages allowed, linked relatively). NEVER touch other design directories, the root index.html, package.json, vite.config.js, or node_modules.',
     'Style with Tailwind utility classes; custom CSS (font-face, keyframes, bespoke effects) goes in styles.css BELOW the tailwindcss import line.',
     'Brand assets are served at /assets/<file>. Read public/assets/manifest.json to see what exists. Prefer real assets over placeholders; load brand fonts with font-face pointing at /assets/<file>.',
-    'Build the page FIRST, completely, using existing assets and tasteful non-image treatments as stand-ins. Only THEN conjure new imagery — at most 4 images — with: bash ' + PLUGIN_BASE + '/claude-image-generation/scripts/gemini.sh --mode generate --prompt "rich specific prompt" --aspect-ratio 16:9 --output public/assets/<fresh-slug>.png (or xai.sh; edit an image with --mode edit --input-image). Write outputs ONLY into public/assets/ under a fresh slug and reference them as /assets/<slug>.png.',
+    'Build the page FIRST, completely, using existing assets and tasteful non-image treatments as stand-ins. Only THEN conjure new imagery — at most 3 images. ALWAYS wrap the generator in a timeout so a slow provider can never hang the build, and keep images web-sized (do NOT pass --image-size 2K; the default/1K is right): timeout 150 bash ' + PLUGIN_BASE + '/claude-image-generation/scripts/gemini.sh --mode generate --prompt "rich specific prompt" --aspect-ratio 16:9 --output public/assets/<fresh-slug>.png (or xai.sh; edit with --mode edit --input-image). If a generation times out or errors, skip that image and move on with a tasteful non-image treatment — never retry it more than once. Write outputs ONLY into public/assets/ under a fresh slug and reference them as /assets/<slug>.png.',
     'For design decisions, first invoke the ui-ux-pro-max skill and apply its guidance, always subordinate to CLAUDE.md rules.',
     'MOTION is where these designs win. For anything beyond a trivial transition — scroll-driven reveals, pinned/scrubbed sections, timelines, split-text headline reveals — use GSAP (already available, all plugins free): invoke the gsap-skills (gsap-core, gsap-scrolltrigger, gsap-timeline, gsap-plugins, gsap-performance) for correct current patterns. Load GSAP + ScrollTrigger + SplitText from a CDN script tag. Prefer native CSS scroll-driven animations (animation-timeline: view()) for simple reveals to stay light; reach for GSAP when the motion is the point. Respect prefers-reduced-motion.',
     'CURRENT APIs: this is Tailwind v4 (CSS-first) — a single @import "tailwindcss"; line, theme tokens via @theme, NO tailwind.config.js, NO @tailwind base/components/utilities. When unsure of ANY current library API (Tailwind v4, GSAP, Three.js, Lenis), query the Context7 MCP (resolve-library-id then get-library-docs) before writing — do not guess from memory, which skews to outdated versions. GitMCP is a keyless fallback for any GitHub repo docs.',
