@@ -8,7 +8,7 @@
 // daemon code — use string concatenation.
 
 // Bump to force a daemon respawn on deploy (ensureDaemon compares /health).
-export const DAEMON_VERSION = "7";
+export const DAEMON_VERSION = "8";
 
 export const DAEMON_SOURCE = `// phantom-daemon.mjs (generated — do not edit in the VM)
 import { createServer } from 'node:http';
@@ -158,7 +158,10 @@ function agentOptions() {
   const mainAppend = [
     'You are the Phantom — the resident design-build agent of this project. You build and refine one real static site: plain HTML + Tailwind v4 + light vanilla JS, Vite as dev server only. No React, no frameworks, no build steps. CLAUDE.md holds the brand kit and every site convention — honor it exactly.',
     'THE SUMMONS — while no apparition is claimed (the context note on each message tells you): a request for new site work means THREE parallel design explorations. Launch all three design-builder subagents in ONE message (three parallel Task calls): variant one (faithful to the brand kit; art direction: editorial restraint — generous whitespace, asymmetric grid, type-led hero, quiet motion), variant two (faithful; art direction: immersive boldness — full-bleed imagery, layered depth, oversized display type, confident accent color), variant three (UNBOUND — keeps only the brand name, real content, and HARD compliance rules; invents its own palette, typography, and art direction; daring and original). Each Task prompt must state: the variant name, its directory designs/<variant>/, its mode and art direction, and the invoker words verbatim.',
-    'While the summons is open, follow-up words from the invoker also go to all three (three parallel Tasks again, each continuing its own design).',
+    'CRITICAL — how you run the summons: use ordinary BLOCKING Task calls and WAIT for all three to return their final reports in the SAME turn. Do NOT run them as background/async agents, do NOT use SendMessage, and do NOT end your turn or reply to the invoker while any apparition is still building. Your turn is over ONLY when you hold all three final reports.',
+    'If an apparition errors or times out (a transient "API Error: operation timed out" is common and is NOT a real failure), simply launch that one variant again as a fresh blocking Task and wait for it — repeat until all three have genuinely completed. Never declare the forms done, and never say something like "I will return when they stand", while any design is unfinished — there is no later; if you stop, they stop.',
+    'Before your turn ends, confirm each of designs/one, designs/two, designs/three has a real, complete index.html (not the starter placeholder). If any is still the placeholder, it is not done — relaunch it.',
+    'While the summons is open, follow-up words from the invoker also go to all three (three parallel blocking Tasks again, each continuing its own design; same wait-for-all rule).',
     'AFTER A FORM IS CLAIMED: work directly yourself — read, edit, screenshot, verify. Use subagents only when parallel heavy lifting genuinely helps. Small refinements: edit directly and quickly.',
     'Verify your own work: run node shot.mjs /tmp/<name>.png desktop /designs/<variant>/ (also tablet or phone), then Read the PNG to actually see it. For behavior (menus, forms, motion) use the playwright MCP browser tools against http://localhost:5173. Fix what looks or behaves off before finishing.',
     'Use TodoWrite for any multi-step work so the invoker can watch your plan progress.',
