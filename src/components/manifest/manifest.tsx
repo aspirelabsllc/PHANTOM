@@ -202,17 +202,32 @@ export function Manifest({
   const [booting, setBooting] = useState(false);
   const [bootErr, setBootErr] = useState<string | null>(null);
 
-  async function boot() {
+  // Open the chamber. A hibernated VM's vite can take a couple of restarts to
+  // serve; the route reports `ready`, so retry a few times before surfacing the
+  // preview — a not-yet-ready boot heals itself instead of showing a dead frame.
+  const MAX_BOOT_TRIES = 4;
+  async function boot(attempt = 0) {
     setBooting(true);
-    setBootErr(null);
+    if (attempt === 0) setBootErr(null);
+    const retry = () => setTimeout(() => boot(attempt + 1), 4000);
     try {
       const res = await fetch(`/api/projects/${project.id}/sandbox`, { method: "POST" });
       const data = await res.json();
       if (!res.ok) throw new Error(data.error ?? "boot failed");
+      if (data.ready === false && attempt < MAX_BOOT_TRIES - 1) {
+        retry(); // vite still warming — keep the spinner, try again shortly
+        return;
+      }
+      // ready (or out of tries — surface it best-effort; the frame reloads on events)
       setPreview(data.previewUrl as string);
+      setPreviewKey((k) => k + 1);
+      setBooting(false);
     } catch (e) {
+      if (attempt < MAX_BOOT_TRIES - 1) {
+        retry();
+        return;
+      }
       setBootErr(e instanceof Error ? e.message : "The chamber would not open.");
-    } finally {
       setBooting(false);
     }
   }
@@ -736,7 +751,7 @@ export function Manifest({
                 <span className="await-sigil">{SIGIL}</span>
                 <h2>The chamber would not open.</h2>
                 <p>{bootErr}</p>
-                <button className="ghost-btn cyan" type="button" onClick={boot} style={{ marginTop: 6 }}>
+                <button className="ghost-btn cyan" type="button" onClick={() => boot()} style={{ marginTop: 6 }}>
                   Try again
                 </button>
               </div>

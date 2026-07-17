@@ -107,13 +107,14 @@ export default defineConfig({
   ),
 };
 
-export type BootResult = { sandboxId: string; previewUrl: string; created: boolean };
+export type BootResult = { sandboxId: string; previewUrl: string; created: boolean; ready: boolean };
 
 // Boot (or wake) a project's sandbox and return a signed preview URL.
 export async function bootSandbox(existingId: string | null): Promise<BootResult> {
   const s = sdk();
   let sandboxId = existingId;
   let created = false;
+  let ready = false;
 
   // wake an existing sandbox; if it's gone, fall through to create
   if (sandboxId) {
@@ -123,7 +124,7 @@ export async function bootSandbox(existingId: string | null): Promise<BootResult
       await ensureStarter(client);
       // gate on the actual port — restarts a wedged/hibernated vite and waits
       // until it serves, so the preview URL we return never 502s
-      await ensureDevServer(client);
+      ready = await ensureDevServer(client);
     } catch {
       sandboxId = null;
     }
@@ -137,7 +138,7 @@ export async function bootSandbox(existingId: string | null): Promise<BootResult
       await client.fs.writeTextFile(path, content);
     }
     await client.commands.run("npm install");
-    await ensureDevServer(client);
+    ready = await ensureDevServer(client);
     created = true;
   }
 
@@ -145,7 +146,7 @@ export async function bootSandbox(existingId: string | null): Promise<BootResult
     expiresAt: new Date(Date.now() + 24 * 60 * 60 * 1000),
   });
   const previewUrl = s.hosts.getUrl({ sandboxId, token: token.token }, DEV_PORT);
-  return { sandboxId, previewUrl, created };
+  return { sandboxId, previewUrl, created, ready };
 }
 
 // Minimal shape of the connected sandbox client we use.

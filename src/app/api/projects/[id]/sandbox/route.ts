@@ -25,7 +25,7 @@ export async function POST(_req: NextRequest, ctx: { params: Promise<{ id: strin
   if (!project) return NextResponse.json({ error: "not found" }, { status: 404 });
 
   try {
-    const { sandboxId, previewUrl, created } = await bootSandbox(project.sandbox_id ?? null);
+    const { sandboxId, previewUrl, created, ready } = await bootSandbox(project.sandbox_id ?? null);
     if (created || sandboxId !== project.sandbox_id) {
       await supabase.from("phantom_projects").update({ sandbox_id: sandboxId }).eq("id", id);
     }
@@ -33,7 +33,9 @@ export async function POST(_req: NextRequest, ctx: { params: Promise<{ id: strin
     syncProjectAssets(sandboxId, (project.offerings as Offering[]) ?? [], project.brand as Brand | null).catch(
       () => {},
     );
-    return NextResponse.json({ previewUrl, sandboxId, created });
+    // `ready` = vite is actually serving; false means it's still warming
+    // (hibernated VM waking) — the client retries rather than showing a dead frame
+    return NextResponse.json({ previewUrl, sandboxId, created, ready });
   } catch (err) {
     const message = err instanceof Error ? err.message : "The chamber would not open.";
     return NextResponse.json({ error: message }, { status: 500 });
