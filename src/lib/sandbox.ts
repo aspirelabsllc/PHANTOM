@@ -265,9 +265,30 @@ export async function ensureDevServer(client: SbClient): Promise<boolean> {
 // Migrate a VM that predates the current starter layout (e.g. the React-era
 // scaffold): rewrite the scaffold files, drop the dead React app, and let
 // Vite restart itself off the config change. Idempotent and cheap when current.
+//
+// DANGER, learned the hard way: rewriting the starter also rewrites the
+// designs/* placeholders — over the agent's BUILT designs. A flaky VM exec
+// can return EMPTY output for the marker read, which used to look like a
+// version mismatch and silently reverted every built design to "not yet
+// condensed". Never rewrite on an ambiguous read: only a POSITIVE mismatch
+// (non-empty, different version) or a CONFIRMED-bare VM may trigger it.
 export async function ensureStarter(client: SbClient): Promise<void> {
-  const v = (await client.commands.run(`cat ${STARTER_MARKER} 2>/dev/null || true`)).trim();
+  let v = "";
+  try {
+    v = (await client.commands.run(`cat ${STARTER_MARKER} 2>/dev/null || true`)).trim();
+  } catch {
+    return; // unreadable ≠ stale — leave the VM's files alone
+  }
   if (v === STARTER_VERSION) return;
+  if (!v) {
+    // empty read: truly-bare VM, or a wedged exec that returned nothing?
+    // package.json exists on every provisioned VM — only rewrite when the
+    // probe POSITIVELY confirms bare.
+    const probe = (
+      await client.commands.run("test -f package.json && echo has || echo bare").catch(() => "")
+    ).trim();
+    if (probe !== "bare") return;
+  }
   for (const [path, content] of Object.entries(STARTER)) {
     await client.fs.writeTextFile(path, content);
   }
