@@ -44,8 +44,11 @@ await c.fs.writeTextFile("vite.config.js", VITE_CONFIG);
 await c.fs.writeTextFile("package.json", PKG);
 console.log("restored config");
 
-// [v]ite bracket trick so pkill doesn't match its own command line
-await run("pkill -9 -f '[v]ite' 2>/dev/null; sleep 2; test -d node_modules/@tailwindcss/vite || npm install; true");
+// [v]ite bracket trick so pkill doesn't match its own command line — and the
+// kill must be its own command: any plain "vite" substring in the same line
+// (like node_modules/@tailwindcss/vite) makes pkill -f kill its own shell (137)
+await run("pkill -9 -f '[v]ite' 2>/dev/null; true");
+await run("sleep 2; test -d node_modules/@tailwindcss/vite || npm install; true");
 await c.commands.runBackground("npm run dev");
 
 let ok = "000";
@@ -55,5 +58,5 @@ for (let i = 0; i < 30; i++) {
   if (ok === "200") break;
 }
 console.log("5173 /designs/one/:", ok);
-if (ok !== "200") console.log("log:", await run("tail -25 /tmp/vite.log 2>&1; ss -tlnp 2>/dev/null | grep 5173 || echo 'nothing on 5173'"));
+if (ok !== "200") console.log("log:", await run("tail -25 /tmp/devserver.log /tmp/vite.log 2>&1; ss -tlnp 2>/dev/null | grep 5173 || echo 'nothing on 5173'"));
 process.exit(0);

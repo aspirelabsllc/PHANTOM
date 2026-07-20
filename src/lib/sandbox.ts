@@ -241,12 +241,17 @@ export async function ensureDevServer(client: SbClient): Promise<boolean> {
   await client.fs.writeTextFile("vite.config.js", STARTER["vite.config.js"]);
   await client.fs.writeTextFile("package.json", STARTER["package.json"]);
 
-  // free the port + reinstall deps if they vanished. `[v]ite` bracket trick:
-  // the pattern must NOT match this pkill command's own line (a bare 'vite'
-  // would, and pkill -9 would kill itself). strictPort means a lingering vite
-  // makes the new one exit, so a hard kill first is essential.
+  // free the port + reinstall deps if they vanished. strictPort means a
+  // lingering vite makes the new one exit, so a hard kill first is essential.
+  // The kill MUST run as its own command with NO other "vite" text in it:
+  // pkill -f scans full command lines, and the `[v]ite` bracket trick only
+  // hides the pattern itself — a plain "vite" substring anywhere else in the
+  // same line (node_modules/@tailwindcss/vite…) makes pkill -9 kill its own
+  // shell, and the whole boot dies with exit 137. That bug broke every cold
+  // boot in prod.
+  await client.commands.run("pkill -9 -f '[v]ite' 2>/dev/null; true");
   await client.commands.run(
-    "pkill -9 -f '[v]ite' 2>/dev/null; sleep 2; test -d node_modules/@tailwindcss/vite || npm install; true",
+    "sleep 2; test -d node_modules/@tailwindcss/vite || npm install; true",
   );
   // start detached through CSB's own background runner (keeps it alive)
   await client.commands.runBackground("npm run dev");

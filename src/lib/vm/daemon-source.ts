@@ -8,7 +8,7 @@
 // daemon code — use string concatenation.
 
 // Bump to force a daemon respawn on deploy (ensureDaemon compares /health).
-export const DAEMON_VERSION = "11";
+export const DAEMON_VERSION = "12";
 
 export const DAEMON_SOURCE = `// phantom-daemon.mjs (generated — do not edit in the VM)
 import { createServer, get as httpGet } from 'node:http';
@@ -410,7 +410,7 @@ setInterval(() => {
     if (++viteDownStreak < 2) return;
     viteDownStreak = 0;
     try {
-      spawn('sh', ['-c', "pkill -9 -f '[v]ite' 2>/dev/null; sleep 1; nohup npm run dev >/tmp/vite.log 2>&1 &"], {
+      spawn('sh', ['-c', "pkill -9 -f '[v]ite' 2>/dev/null; sleep 1; nohup npm run dev >/tmp/devserver.log 2>&1 &"], {
         stdio: 'ignore',
         detached: true,
       }).unref();
@@ -516,7 +516,7 @@ const server = createServer(async (req, res) => {
     // hard stop: the main interrupt may not reach subagent CLI workers already
     // dispatched for parallel Tasks — kill them so work actually ceases. The
     // [c] bracket trick keeps this pkill from matching the daemon's own node.
-    try { execSync("pkill -f '[c]laude' 2>/dev/null; pkill -f 'agent-sdk' 2>/dev/null; true", { timeout: 5000 }); } catch {}
+    try { execSync("pkill -f '[c]laude' 2>/dev/null; pkill -f '[a]gent-sdk' 2>/dev/null; true", { timeout: 5000 }); } catch {}
     emit('interrupted', {});
     setStatus('idle');
     return json(res, 200, { ok: true });
@@ -544,7 +544,7 @@ const server = createServer(async (req, res) => {
       // dev server (process alive, port dead → 502). Nudge it back, detached so
       // the kill can't reach this handler.
       try {
-        spawn('sh', ['-c', "pkill -9 -f '[v]ite' 2>/dev/null; sleep 1; nohup npm run dev >/tmp/vite.log 2>&1 &"], {
+        spawn('sh', ['-c', "pkill -9 -f '[v]ite' 2>/dev/null; sleep 1; nohup npm run dev >/tmp/devserver.log 2>&1 &"], {
           stdio: 'ignore',
           detached: true,
         }).unref();
