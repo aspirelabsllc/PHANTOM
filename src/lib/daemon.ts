@@ -40,13 +40,25 @@ export type DaemonHandle = {
 // /daemon racing a /say) share the same bootstrap instead of doubling up the
 // builder/daemon setup work on the VM.
 const ensureFlights = new Map<string, Promise<DaemonHandle>>();
+// The whole bootstrap races a hard budget. A wedged VM can hang a CSB exec
+// call forever; without this the flight never settles, stays in the map, and
+// every later attach joins the same zombie promise until the process restarts.
+const ENSURE_BUDGET_MS = 240_000;
 export function ensureProjectDaemon(project: ProjectRow): Promise<DaemonHandle> {
   const inflight = ensureFlights.get(project.id);
   if (inflight) return inflight;
   const flight = (async () => {
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    const timeout = new Promise<never>((_, reject) => {
+      timer = setTimeout(
+        () => reject(new Error("The chamber took too long to attune — try again.")),
+        ENSURE_BUDGET_MS,
+      );
+    });
     try {
-      return await ensureProjectDaemonInner(project);
+      return await Promise.race([ensureProjectDaemonInner(project), timeout]);
     } finally {
+      clearTimeout(timer);
       ensureFlights.delete(project.id);
     }
   })();
