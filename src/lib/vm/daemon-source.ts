@@ -8,7 +8,7 @@
 // daemon code — use string concatenation.
 
 // Bump to force a daemon respawn on deploy (ensureDaemon compares /health).
-export const DAEMON_VERSION = "13";
+export const DAEMON_VERSION = "14";
 
 export const DAEMON_SOURCE = `// phantom-daemon.mjs (generated — do not edit in the VM)
 import { createServer, get as httpGet } from 'node:http';
@@ -55,9 +55,11 @@ let currentTool = null;
 let lastUserText = '';
 let lastRewind = null;
 let lastActivityAt = Date.now(); // any control request, SSE client, or emitted event
+let lastEmitAt = Date.now();     // last event of any kind — the stall watchdog's pulse
 
 function emit(type, payload, ephemeral) {
   lastActivityAt = Date.now();
+  lastEmitAt = Date.now();
   const ev = { seq: ++state.seq, turn_id: currentTurn, type: type, payload: payload || {} };
   saveState();
   buffer.push(ev);
@@ -436,6 +438,25 @@ setInterval(() => {
     } catch {}
   });
 }, 20000).unref();
+
+// ---------- stall watchdog ----------
+// Twice in production a working turn froze forever on a trivial tool call:
+// the CSB edge silently drops long-held connections, the CLI's stream dies
+// without an error, and the tool result never arrives — status stays working,
+// no event ever fires again. Even minutes of pure thinking streams deltas, so
+// a long WORKING silence means wedged, not busy. Recover: mark the turn
+// un-progressed so the catch path requeues it (capped), kill the CLI workers,
+// and let runForever reweave from the resumed session.
+const STALL_MS = 6 * 60 * 1000;
+setInterval(() => {
+  if (status !== 'working') return;
+  if (Date.now() - lastEmitAt < STALL_MS) return;
+  lastEmitAt = Date.now(); // one recovery per stall window
+  emit('notice', { text: 'The thread froze mid-weave — the Phantom reweaves it.' }, true);
+  if (inFlight) sawTurnActivity = false; // force the requeue on teardown
+  try { if (liveQuery) liveQuery.interrupt().catch(function () {}); } catch {}
+  try { execSync("pkill -f '[c]laude' 2>/dev/null; pkill -f '[a]gent-sdk' 2>/dev/null; true", { timeout: 5000 }); } catch {}
+}, 60000).unref();
 
 // ---------- idle hibernation ----------
 // A VM left running forever holds one of the workspace's few concurrent-VM
