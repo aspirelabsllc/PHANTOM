@@ -45,6 +45,11 @@ export function useDaemon(projectId: string, initialEvents: PhantomEvent[], enab
   const lastSeqRef = useRef<number>(initialEvents.reduce((m, e) => Math.max(m, e.seq), 0));
   const retryRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const deadRef = useRef(false);
+  // Attach failures back off exponentially (6s → 60s cap). A tight fixed-delay
+  // loop against a broken boot hammered /daemon — and every hit was a full
+  // sandbox boot attempt, which is how the CSB creation quota burned out.
+  const attemptRef = useRef(0);
+  const retryDelay = () => Math.min(60_000, 6_000 * 2 ** Math.min(attemptRef.current, 4));
 
   const merge = useCallback((ev: PhantomEvent) => {
     if (ev.seq <= 0) return;
@@ -114,7 +119,10 @@ export function useDaemon(projectId: string, initialEvents: PhantomEvent[], enab
         daemonEndpoint(d, "/events", { after: String(lastSeqRef.current) }),
       );
       esRef.current = es;
-      es.onopen = () => setStatus((s) => (s === "connecting" || s === "offline" ? "idle" : s));
+      es.onopen = () => {
+        attemptRef.current = 0;
+        setStatus((s) => (s === "connecting" || s === "offline" ? "idle" : s));
+      };
       es.onmessage = (e) => {
         try {
           handleEvent(JSON.parse(e.data) as PhantomEvent);
@@ -127,19 +135,24 @@ export function useDaemon(projectId: string, initialEvents: PhantomEvent[], enab
         if (esRef.current === es) esRef.current = null;
         setStatus("offline");
         if (!deadRef.current && !retryRef.current) {
+          attemptRef.current += 1;
           retryRef.current = setTimeout(() => {
             retryRef.current = null;
             attach();
-          }, 4000);
+          }, retryDelay());
         }
       };
     } catch {
+      // a failed POST /daemon means the boot itself failed — drop the cached
+      // handle so the retry re-bootstraps instead of reusing a dead URL
+      daemonRef.current = null;
       setStatus("offline");
       if (!deadRef.current && !retryRef.current) {
+        attemptRef.current += 1;
         retryRef.current = setTimeout(() => {
           retryRef.current = null;
           attach();
-        }, 6000);
+        }, retryDelay());
       }
     }
   }, [projectId, handleEvent]);

@@ -1,7 +1,7 @@
 import { randomBytes } from "node:crypto";
 import { createAdminClient } from "@/lib/supabase/admin";
 import {
-  bootSandbox,
+  bootProjectSandbox,
   connectSandbox,
   ensureBuilder,
   ensureDaemon,
@@ -36,7 +36,25 @@ export type DaemonHandle = {
   created: boolean;
 };
 
-export async function ensureProjectDaemon(project: ProjectRow): Promise<DaemonHandle> {
+// One daemon-ensure in flight per project: concurrent /daemon attaches (or a
+// /daemon racing a /say) share the same bootstrap instead of doubling up the
+// builder/daemon setup work on the VM.
+const ensureFlights = new Map<string, Promise<DaemonHandle>>();
+export function ensureProjectDaemon(project: ProjectRow): Promise<DaemonHandle> {
+  const inflight = ensureFlights.get(project.id);
+  if (inflight) return inflight;
+  const flight = (async () => {
+    try {
+      return await ensureProjectDaemonInner(project);
+    } finally {
+      ensureFlights.delete(project.id);
+    }
+  })();
+  ensureFlights.set(project.id, flight);
+  return flight;
+}
+
+async function ensureProjectDaemonInner(project: ProjectRow): Promise<DaemonHandle> {
   const admin = createAdminClient();
 
   // control secret — minted once per project, shared app <-> daemon <-> browser
@@ -46,8 +64,11 @@ export async function ensureProjectDaemon(project: ProjectRow): Promise<DaemonHa
     await admin.from("phantom_projects").update({ daemon_secret: secret }).eq("id", project.id);
   }
 
-  // sandbox — boot or wake
-  const boot = await bootSandbox(project.sandbox_id ?? null);
+  // sandbox — boot or wake (persist a fresh VM's id immediately so a failed
+  // boot never strands it; see bootSandbox)
+  const boot = await bootProjectSandbox(project.id, project.sandbox_id ?? null, async (newId) => {
+    await admin.from("phantom_projects").update({ sandbox_id: newId }).eq("id", project.id);
+  });
   if (boot.created || boot.sandboxId !== project.sandbox_id) {
     await admin.from("phantom_projects").update({ sandbox_id: boot.sandboxId }).eq("id", project.id);
   }

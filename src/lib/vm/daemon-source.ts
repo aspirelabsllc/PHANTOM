@@ -8,7 +8,7 @@
 // daemon code — use string concatenation.
 
 // Bump to force a daemon respawn on deploy (ensureDaemon compares /health).
-export const DAEMON_VERSION = "10";
+export const DAEMON_VERSION = "11";
 
 export const DAEMON_SOURCE = `// phantom-daemon.mjs (generated — do not edit in the VM)
 import { createServer, get as httpGet } from 'node:http';
@@ -54,8 +54,10 @@ let status = 'idle';
 let currentTool = null;
 let lastUserText = '';
 let lastRewind = null;
+let lastActivityAt = Date.now(); // any control request, SSE client, or emitted event
 
 function emit(type, payload, ephemeral) {
+  lastActivityAt = Date.now();
   const ev = { seq: ++state.seq, turn_id: currentTurn, type: type, payload: payload || {} };
   saveState();
   buffer.push(ev);
@@ -417,6 +419,29 @@ setInterval(() => {
   });
 }, 20000).unref();
 
+// ---------- idle hibernation ----------
+// A VM left running forever holds one of the workspace's few concurrent-VM
+// slots; enough dormant chambers and NOTHING can boot. When nobody is attached,
+// no turn is running, and nothing is queued for long enough, flush events and
+// ask the app to shut this VM down (files persist; the next open resumes it).
+const IDLE_MS = Number(process.env.PHANTOM_IDLE_MS || 30 * 60 * 1000);
+let hibernateAskedAt = 0;
+setInterval(async () => {
+  if (!ORIGIN || !gwToken) return;
+  if (listeners.size > 0 || status !== 'idle' || queue.length > 0) return;
+  if (Date.now() - lastActivityAt < IDLE_MS) return;
+  if (Date.now() - hibernateAskedAt < 5 * 60 * 1000) return; // a failed ask retries later
+  hibernateAskedAt = Date.now();
+  try {
+    await flushDb();
+    await fetch(ORIGIN + '/api/hibernate', {
+      method: 'POST',
+      headers: { authorization: 'Bearer ' + gwToken },
+    });
+    // if the shutdown lands, the VM (and this process) stops here
+  } catch {}
+}, 60000).unref();
+
 // ---------- control server ----------
 function cors(res) {
   res.setHeader('Access-Control-Allow-Origin', '*');
@@ -443,6 +468,7 @@ const server = createServer(async (req, res) => {
 
   const auth = req.headers['x-phantom-auth'] || url.searchParams.get('auth') || '';
   if (!SECRET || auth !== SECRET) return json(res, 401, { error: 'unauthorized' });
+  lastActivityAt = Date.now();
 
   if (url.pathname === '/state') {
     return json(res, 200, {
@@ -543,7 +569,7 @@ const server = createServer(async (req, res) => {
     res.write('data: ' + JSON.stringify({ seq: state.seq, type: 'status', turn_id: currentTurn, payload: { status: status, tool: currentTool } }) + String.fromCharCode(10, 10));
     listeners.add(res);
     const ping = setInterval(() => { try { res.write(': ping' + String.fromCharCode(10, 10)); } catch {} }, 15000);
-    req.on('close', () => { clearInterval(ping); listeners.delete(res); });
+    req.on('close', () => { clearInterval(ping); listeners.delete(res); lastActivityAt = Date.now(); });
     return;
   }
 

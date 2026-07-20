@@ -110,7 +110,15 @@ export default defineConfig({
 export type BootResult = { sandboxId: string; previewUrl: string; created: boolean; ready: boolean };
 
 // Boot (or wake) a project's sandbox and return a signed preview URL.
-export async function bootSandbox(existingId: string | null): Promise<BootResult> {
+// `onCreated` fires the moment a NEW VM exists — before the (fallible) install
+// and dev-server steps — so the caller can persist the id immediately. Without
+// this, a boot that dies mid-install strands a running VM nobody remembers,
+// and the next attempt forks yet another one (that is how the CSB concurrent-VM
+// and creation quotas both got exhausted in prod).
+export async function bootSandbox(
+  existingId: string | null,
+  onCreated?: (sandboxId: string) => Promise<void>,
+): Promise<BootResult> {
   const s = sdk();
   let sandboxId = existingId;
   let created = false;
@@ -133,13 +141,16 @@ export async function bootSandbox(existingId: string | null): Promise<BootResult
   if (!sandboxId) {
     const sb = await s.sandboxes.create();
     sandboxId = sb.id;
+    created = true;
+    await onCreated?.(sandboxId);
     const client = (await sb.connect()) as unknown as SbClient;
     for (const [path, content] of Object.entries(STARTER)) {
       await client.fs.writeTextFile(path, content);
     }
-    await client.commands.run("npm install");
+    // ensureDevServer installs deps itself when node_modules is missing and
+    // verifies the port serves — and if THIS boot dies anyway, the persisted id
+    // means the next attempt resumes this VM instead of forking a new one.
     ready = await ensureDevServer(client);
-    created = true;
   }
 
   const token = await s.hosts.createToken(sandboxId, {
@@ -147,6 +158,34 @@ export async function bootSandbox(existingId: string | null): Promise<BootResult
   });
   const previewUrl = s.hosts.getUrl({ sandboxId, token: token.token }, DEV_PORT);
   return { sandboxId, previewUrl, created, ready };
+}
+
+// One boot in flight per project. The Manifest page fires /sandbox and /daemon
+// concurrently on mount; without this gate both would race bootSandbox and a
+// null sandbox_id would fork TWO VMs (one orphaned forever).
+const bootFlights = new Map<string, Promise<BootResult>>();
+export function bootProjectSandbox(
+  projectId: string,
+  existingId: string | null,
+  persist: (sandboxId: string) => Promise<void>,
+): Promise<BootResult> {
+  const inflight = bootFlights.get(projectId);
+  if (inflight) return inflight;
+  const flight = (async () => {
+    try {
+      return await bootSandbox(existingId, persist);
+    } finally {
+      bootFlights.delete(projectId);
+    }
+  })();
+  bootFlights.set(projectId, flight);
+  return flight;
+}
+
+// Stop a project's VM (files persist; the next boot resumes it). Used by the
+// idle-hibernate call-home so dormant chambers stop holding concurrent-VM slots.
+export async function shutdownSandbox(sandboxId: string): Promise<void> {
+  await sdk().sandboxes.shutdown(sandboxId);
 }
 
 // Minimal shape of the connected sandbox client we use.

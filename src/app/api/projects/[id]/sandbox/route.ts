@@ -1,6 +1,6 @@
 import { NextResponse, type NextRequest } from "next/server";
 import { createClient } from "@/lib/supabase/server";
-import { bootSandbox } from "@/lib/sandbox";
+import { bootProjectSandbox } from "@/lib/sandbox";
 import { syncProjectAssets } from "@/lib/assets";
 import type { Brand, Offering } from "@/lib/brand";
 
@@ -25,7 +25,15 @@ export async function POST(_req: NextRequest, ctx: { params: Promise<{ id: strin
   if (!project) return NextResponse.json({ error: "not found" }, { status: 404 });
 
   try {
-    const { sandboxId, previewUrl, created, ready } = await bootSandbox(project.sandbox_id ?? null);
+    const { sandboxId, previewUrl, created, ready } = await bootProjectSandbox(
+      id,
+      project.sandbox_id ?? null,
+      // persist the id the moment the VM exists — a boot that fails later can
+      // then RESUME this VM instead of forking a fresh one
+      async (newId) => {
+        await supabase.from("phantom_projects").update({ sandbox_id: newId }).eq("id", id);
+      },
+    );
     if (created || sandboxId !== project.sandbox_id) {
       await supabase.from("phantom_projects").update({ sandbox_id: sandboxId }).eq("id", id);
     }
