@@ -8,7 +8,7 @@
 // daemon code — use string concatenation.
 
 // Bump to force a daemon respawn on deploy (ensureDaemon compares /health).
-export const DAEMON_VERSION = "12";
+export const DAEMON_VERSION = "13";
 
 export const DAEMON_SOURCE = `// phantom-daemon.mjs (generated — do not edit in the VM)
 import { createServer, get as httpGet } from 'node:http';
@@ -371,7 +371,25 @@ async function runForever() {
         if (status !== 'idle' && !queue.length) setStatus('idle');
         continue;
       }
-      if (inFlight && !sawTurnActivity) queue.unshift(inFlight);
+      // a resume pointing at a session whose files are gone (the CLI keeps
+      // them under $HOME, which does not survive a VM recreate) is permanent:
+      // retrying the same sessionId loops forever. Forget it and start fresh —
+      // CLAUDE.md re-grounds the brand, and the queued message goes again.
+      if (/no conversation found/i.test(msg)) {
+        state.sessionId = '';
+        saveState();
+        if (inFlight && !sawTurnActivity) queue.unshift(inFlight);
+        inFlight = null;
+        emit('notice', { text: 'The old thread is gone — the Phantom begins a fresh memory.' }, true);
+        continue;
+      }
+      // requeue the interrupted word so it is not lost — but never endlessly:
+      // a message that dies repeatedly would otherwise loop error turns forever
+      if (inFlight && !sawTurnActivity) {
+        inFlight.requeues = (inFlight.requeues || 0) + 1;
+        if (inFlight.requeues <= 3) queue.unshift(inFlight);
+        else emit('notice', { text: 'A word was dropped after repeated failures — speak it again.' }, true);
+      }
       inFlight = null;
       if (transient(msg) && attempt < 6) {
         attempt++;

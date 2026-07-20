@@ -464,6 +464,14 @@ const SYNC_SCRIPT = [
   "console.log('assets in sync: ' + spec.files.length);",
 ].join("\n");
 
+// The builder toolchain's home. /root does NOT survive a CSB shutdown/resume —
+// plugins, playwright, npm cache, and the Claude CLI's own session files all
+// vanished with it, which broke session resume ("No conversation found") and
+// forced a full multi-minute re-install on every VM wake. /project persists,
+// so everything HOME-relative lives here instead. Kept OUTSIDE /project/sandbox
+// so vite's watcher and git never see it.
+export const PHANTOM_HOME = "/project/.phantom-home";
+
 // Write the daemon + tool scripts, ensure the Agent SDK is installed, clone
 // the enabled skill plugins, and prepare the browser harness (playwright + MCP).
 export async function ensureBuilder(client: SbClient, plugins: Plugin[]): Promise<void> {
@@ -477,8 +485,8 @@ export async function ensureBuilder(client: SbClient, plugins: Plugin[]): Promis
   await ensureGit(client);
   // clone enabled skill plugins (idempotent + shallow); never fail the build on
   // this. Only [a-z0-9._-] names + vetted host repos reach here (resolvePlugins).
-  const dir = "$HOME/.phantom-plugins";
-  const steps = [`mkdir -p ${dir}`];
+  const dir = `${PHANTOM_HOME}/.phantom-plugins`;
+  const steps = [`export HOME=${PHANTOM_HOME}`, `mkdir -p ${dir}`];
   for (const p of enabledPlugins(plugins)) {
     steps.push(
       `test -d ${dir}/${p.name}/.git || git clone --depth 1 --single-branch -q ${p.repo} ${dir}/${p.name}`,
@@ -487,8 +495,8 @@ export async function ensureBuilder(client: SbClient, plugins: Plugin[]): Promis
   // drop leftovers from older VM generations (no longer used)
   steps.push(`rm -rf ${dir}/fullstack-dev-skills`, `rm -f image.mjs agent-runner.mjs`);
   // browser harness: playwright + chromium + the playwright MCP server in an
-  // isolated dir (once per VM) — shot.mjs screenshots + MCP browser tools
-  const tools = "$HOME/.phantom-tools";
+  // isolated dir (once per VM generation) — shot.mjs screenshots + MCP browser
+  const tools = `${PHANTOM_HOME}/.phantom-tools`;
   steps.push(`mkdir -p ${tools}`);
   steps.push(
     `test -d ${tools}/node_modules/playwright || (cd ${tools} && npm init -y >/dev/null 2>&1 && npm i playwright >/dev/null 2>&1)`,
@@ -497,12 +505,13 @@ export async function ensureBuilder(client: SbClient, plugins: Plugin[]): Promis
     `test -d ${tools}/node_modules/@playwright/mcp || (cd ${tools} && npm i @playwright/mcp >/dev/null 2>&1)`,
   );
   steps.push(
-    `test -d $HOME/.cache/ms-playwright || (cd ${tools} && npx --yes playwright install --with-deps chromium >/dev/null 2>&1)`,
+    `test -d ${PHANTOM_HOME}/.cache/ms-playwright || (cd ${tools} && npx --yes playwright install --with-deps chromium >/dev/null 2>&1)`,
   );
-  // pre-warm the better-icons MCP (global install so the daemon's `npx
-  // better-icons` resolves instantly instead of a cold registry fetch; never
-  // run it bare here — with no args it starts the stdio server and would block)
-  steps.push(`command -v better-icons >/dev/null 2>&1 || npm i -g better-icons >/dev/null 2>&1`);
+  // pre-warm the better-icons MCP into the persistent tools dir + npm cache so
+  // the daemon's `npx better-icons` resolves instantly instead of a cold
+  // registry fetch (never run it bare here — with no args it starts the stdio
+  // server and would block)
+  steps.push(`test -d ${tools}/node_modules/better-icons || (cd ${tools} && npm i better-icons >/dev/null 2>&1)`);
   await client.commands.run(steps.join(" ; ") + " ; true");
 }
 
@@ -526,6 +535,9 @@ export async function ensureDaemon(client: SbClient, env: DaemonEnv): Promise<vo
   await client.commands.runBackground("node phantom-daemon.mjs", {
     env: {
       IS_SANDBOX: "1",
+      // persistent home: CLI session files, plugins, tools, npm + browser
+      // caches all survive VM shutdown/resume (see PHANTOM_HOME)
+      HOME: PHANTOM_HOME,
       ANTHROPIC_BASE_URL: gateway,
       ANTHROPIC_API_KEY: env.token,
       PHANTOM_ORIGIN: process.env.APP_URL ?? "",
