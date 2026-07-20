@@ -164,6 +164,11 @@ export async function bootSandbox(
 // concurrently on mount; without this gate both would race bootSandbox and a
 // null sandbox_id would fork TWO VMs (one orphaned forever).
 const bootFlights = new Map<string, Promise<BootResult>>();
+// A wedged VM can hang resume/exec calls indefinitely; without a budget the
+// route eats its full 300s maxDuration (edge 499) and the single-flight lock
+// pins every other caller to the same dead boot. Fail fast instead — the
+// abandoned attempt keeps running detached and the next try starts clean.
+const BOOT_BUDGET_MS = 150_000;
 export function bootProjectSandbox(
   projectId: string,
   existingId: string | null,
@@ -173,7 +178,18 @@ export function bootProjectSandbox(
   if (inflight) return inflight;
   const flight = (async () => {
     try {
-      return await bootSandbox(existingId, persist);
+      let timer: ReturnType<typeof setTimeout> | undefined;
+      const timeout = new Promise<never>((_, reject) => {
+        timer = setTimeout(
+          () => reject(new Error("The chamber took too long to open — try again.")),
+          BOOT_BUDGET_MS,
+        );
+      });
+      try {
+        return await Promise.race([bootSandbox(existingId, persist), timeout]);
+      } finally {
+        clearTimeout(timer);
+      }
     } finally {
       bootFlights.delete(projectId);
     }
