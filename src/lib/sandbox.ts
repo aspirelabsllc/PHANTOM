@@ -410,8 +410,8 @@ const SHOT_SCRIPT = [
 // survives the pruning side of sync-assets.mjs.
 const REGISTER_SCRIPT = [
   "import { readFileSync, writeFileSync, readdirSync, statSync, existsSync } from 'node:fs';",
-  "const origin = (process.env.ANTHROPIC_BASE_URL || '').replace(/\\/api\\/gw\\/?$/, '');",
-  "const token = process.env.ANTHROPIC_API_KEY || '';",
+  "const origin = process.env.PHANTOM_ORIGIN || (process.env.ANTHROPIC_BASE_URL || '').replace(/\\/api\\/gw\\/?$/, '');",
+  "const token = process.env.PHANTOM_CALLBACK_TOKEN || process.env.ANTHROPIC_API_KEY || '';",
   "if (!existsSync('public/assets')) { console.log('registered 0 new asset(s)'); process.exit(0); }",
   "let m = []; try { m = JSON.parse(readFileSync('public/assets/manifest.json', 'utf8')); } catch {}",
   "const known = new Set(m.map((e) => e.file));",
@@ -532,14 +532,24 @@ export async function ensureDaemon(client: SbClient, env: DaemonEnv): Promise<vo
   if (health.includes(`"v":"${DAEMON_VERSION}"`)) return;
   await killDaemon(client);
   const gateway = `${process.env.APP_URL}/api/gw`;
+  // DIRECT mode: give the CLI the real key so its streams go straight to
+  // Anthropic — Railway's edge kept cutting long gateway-proxied streams
+  // mid-tool, freezing or killing heavy summon turns. The session token still
+  // authenticates every app callback (events, hibernate, asset registration).
+  // Same posture Salman chose for GEMINI/XAI: plugin/runtime fidelity over
+  // key isolation inside the project's own VM. Gateway mode remains the
+  // fallback when no real key is configured.
+  const direct = !!process.env.ANTHROPIC_API_KEY;
   await client.commands.runBackground("node phantom-daemon.mjs", {
     env: {
       IS_SANDBOX: "1",
       // persistent home: CLI session files, plugins, tools, npm + browser
       // caches all survive VM shutdown/resume (see PHANTOM_HOME)
       HOME: PHANTOM_HOME,
-      ANTHROPIC_BASE_URL: gateway,
-      ANTHROPIC_API_KEY: env.token,
+      ...(direct
+        ? { ANTHROPIC_API_KEY: process.env.ANTHROPIC_API_KEY as string }
+        : { ANTHROPIC_BASE_URL: gateway, ANTHROPIC_API_KEY: env.token }),
+      PHANTOM_CALLBACK_TOKEN: env.token,
       PHANTOM_ORIGIN: process.env.APP_URL ?? "",
       PHANTOM_DAEMON_SECRET: env.secret,
       PHANTOM_PROJECT: env.projectId,

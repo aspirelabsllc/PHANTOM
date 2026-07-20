@@ -8,7 +8,7 @@
 // daemon code — use string concatenation.
 
 // Bump to force a daemon respawn on deploy (ensureDaemon compares /health).
-export const DAEMON_VERSION = "14";
+export const DAEMON_VERSION = "15";
 
 export const DAEMON_SOURCE = `// phantom-daemon.mjs (generated — do not edit in the VM)
 import { createServer, get as httpGet } from 'node:http';
@@ -41,8 +41,14 @@ setInterval(() => {
   try { writeFileSync(STATE_FILE, JSON.stringify({ sessionId: state.sessionId, seq: state.seq })); } catch {}
 }, 1000).unref();
 
-// ---------- gateway token (refreshed by every /say) ----------
-let gwToken = process.env.ANTHROPIC_API_KEY || '';
+// ---------- auth ----------
+// DIRECT mode (no ANTHROPIC_BASE_URL): the CLI talks straight to Anthropic
+// with the real key — the Railway gateway's edge kept cutting long streamed
+// responses mid-tool (ede stop_reason=tool_use, frozen turns). gwToken is the
+// app CALLBACK token (session-token) for /api/events, /api/hibernate and
+// asset registration; /say refreshes it.
+const DIRECT = !process.env.ANTHROPIC_BASE_URL;
+let gwToken = process.env.PHANTOM_CALLBACK_TOKEN || process.env.ANTHROPIC_API_KEY || '';
 let queryStartedAt = 0;
 
 // ---------- event stream ----------
@@ -220,7 +226,12 @@ function agentOptions() {
     includePartialMessages: true,
     forwardSubagentText: true,
     settingSources: ['project'],
-    env: Object.assign({}, process.env, { ANTHROPIC_API_KEY: gwToken, IS_SANDBOX: '1' }),
+    env: Object.assign({}, process.env, {
+      // direct mode keeps the real key from the spawn env; gateway mode swaps
+      // in the freshest session token so the CLI's calls validate
+      ANTHROPIC_API_KEY: DIRECT ? (process.env.ANTHROPIC_API_KEY || '') : gwToken,
+      IS_SANDBOX: '1',
+    }),
     plugins: plugins,
     skills: skills,
     mcpServers: mcpServers,
@@ -264,7 +275,7 @@ function registerAssets() {
   // 'assets' event when done so the UI refreshes the vault.
   try {
     const child = spawn('node', ['register-assets.mjs'], {
-      env: Object.assign({}, process.env, { ANTHROPIC_API_KEY: gwToken }),
+      env: Object.assign({}, process.env, { PHANTOM_CALLBACK_TOKEN: gwToken, ANTHROPIC_API_KEY: gwToken }),
       stdio: 'ignore',
     });
     child.on('close', () => emit('assets', {}, true));
@@ -521,9 +532,10 @@ const server = createServer(async (req, res) => {
     const text = String(body.text || '').trim();
     if (!text) return json(res, 400, { error: 'empty' });
     if (body.token) gwToken = body.token;
-    // stale CLI env self-heal: restart the session (resume) before a turn
-    // whose spawn-time token would be expired
-    if (liveQuery && status === 'idle' && Date.now() - queryStartedAt > 12 * 3600 * 1000) {
+    // stale CLI env self-heal (gateway mode only — a real key never expires):
+    // restart the session (resume) before a turn whose spawn-time token would
+    // be expired
+    if (!DIRECT && liveQuery && status === 'idle' && Date.now() - queryStartedAt > 12 * 3600 * 1000) {
       pendingRestart = true;
       if (wakeup) wakeup();
       await new Promise((r) => setTimeout(r, 300));
